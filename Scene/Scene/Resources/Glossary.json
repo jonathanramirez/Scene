@@ -1,0 +1,8 @@
+[
+  { "key": "VO", "title": "V.O. (Voice Over)", "description": "Dialogue spoken over the scene, not coming from a visible character in the moment." },
+  { "key": "OS", "title": "O.S. (Off Screen)", "description": "Dialogue spoken by a character who is present in the scene but not visible in the shot." },
+  { "key": "PRELAP", "title": "PRE-LAP", "description": "Audio from the next scene begins before the visual cut to that scene." },
+  { "key": "FADEIN", "title": "FADE IN", "description": "Transition where the picture appears gradually from black." },
+  { "key": "FADEOUT", "title": "FADE OUT", "description": "Transition where the picture gradually disappears to black." },
+  { "key": "CUTTO", "title": "CUT TO", "description": "Direct cut transition to the next shot/scene." }
+]
