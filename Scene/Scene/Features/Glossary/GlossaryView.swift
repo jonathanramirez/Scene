@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct GlossaryView: View {
     @StateObject private var store = GlossaryStore()

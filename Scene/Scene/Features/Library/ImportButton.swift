@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+internal import os
 
 struct ImportButton: ToolbarContent {
     @Environment(\.modelContext) private var context

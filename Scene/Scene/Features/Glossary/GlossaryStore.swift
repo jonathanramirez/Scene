@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 struct GlossaryTerm: Identifiable, Codable {
     var id: String { key }

@@ -1,7 +1,7 @@
 import Foundation
 
 enum PDFOutlineBuilder {
-    static func buildScenes(from pages: [(pageIndex: Int, text: String)]) -> [ScriptScene] {
+    nonisolated static func buildScenes(from pages: [(pageIndex: Int, text: String)]) -> [ScriptScene] {
         var scenes: [ScriptScene] = []
         var idx = 0
 

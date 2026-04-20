@@ -1,4 +1,6 @@
 import Foundation
+import Combine
+internal import os
 
 @MainActor
 final class ReaderSplitViewModel: ObservableObject {
@@ -28,7 +30,20 @@ final class ReaderSplitViewModel: ObservableObject {
     private func resolveBookmarkIfNeeded(url: URL, bookmark: Data?) throws -> URL {
         guard let bookmark else { return url }
         var stale = false
-        let resolved = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
-        return resolved
+        #if os(macOS)
+        return try URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withSecurityScope],
+            relativeTo: nil,
+            bookmarkDataIsStale: &stale
+        )
+        #else
+        return try URL(
+            resolvingBookmarkData: bookmark,
+            options: [],
+            relativeTo: nil,
+            bookmarkDataIsStale: &stale
+        )
+        #endif
     }
 }

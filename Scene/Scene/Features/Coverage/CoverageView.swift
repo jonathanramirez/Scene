@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct CoverageView: View {
     @State private var logline = ""

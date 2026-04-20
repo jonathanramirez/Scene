@@ -6,6 +6,7 @@ enum AppError: LocalizedError {
     case securityScopedAccessDenied
     case pdfOpenFailed
     case noFileURL
+    case deleteFailed
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,7 @@ enum AppError: LocalizedError {
         case .securityScopedAccessDenied: return "Security-scoped access denied."
         case .pdfOpenFailed: return "Could not open PDF."
         case .noFileURL: return "No file URL on document."
+        case .deleteFailed: return "Could not delete the script."
         }
     }
 }
