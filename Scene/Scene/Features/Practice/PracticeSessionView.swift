@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftData
 import SwiftUI
 
@@ -11,6 +12,7 @@ private struct PracticeSceneOption: Identifiable, Hashable {
 struct PracticeSessionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(ScriptSessionStore.self) private var sessionStore
 
     let document: ScriptDocument
     let parseResult: ScriptParseResult
@@ -22,11 +24,16 @@ struct PracticeSessionView: View {
     @State private var onlyScenesWithSelectedCharacter = true
     @State private var responseWindow: Double = 4
     @State private var betweenTurnsPause: Double = 0.8
+    @State private var speechRate: Float = AVSpeechUtteranceDefaultSpeechRate
     @State private var speakSelectedCharacter = false
     @State private var hideSelectedDialogue = true
     @State private var revealCurrentLine = false
     @State private var noteDraft = ""
+    @State private var selectedNoteTag: NoteTag? = nil
     @State private var focusedTurnSequenceIndex: Int?
+    @State private var isShowingLyrics = false
+
+    private var session: ScriptSessionState { sessionStore.session(for: document.id) }
 
     init(document: ScriptDocument, parseResult: ScriptParseResult, initialFocusedTurnSequenceIndex: Int? = nil) {
         self.document = document
@@ -79,8 +86,27 @@ struct PracticeSessionView: View {
                         Stepper("Pause for your line: \(responseWindow.formatted(.number.precision(.fractionLength(1))))s", value: $responseWindow, in: 1...12, step: 0.5)
                         Stepper("Pause between turns: \(betweenTurnsPause.formatted(.number.precision(.fractionLength(1))))s", value: $betweenTurnsPause, in: 0...4, step: 0.2)
 
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Reading speed: \(speedLabel(speechRate))")
+                                .font(.subheadline)
+                            Slider(
+                                value: Binding(
+                                    get: { Double(speechRate) },
+                                    set: { speechRate = Float($0) }
+                                ),
+                                in: Double(AVSpeechUtteranceMinimumSpeechRate)...Double(AVSpeechUtteranceMaximumSpeechRate)
+                            )
+                            .tint(.orange)
+                        }
+
                         Toggle("Read my lines too", isOn: $speakSelectedCharacter)
                         Toggle("Hide my lines in preview", isOn: $hideSelectedDialogue)
+
+                        if controller.ttsUnavailable {
+                            Label("Text-to-speech unavailable on this device. Visual cues still work.", systemImage: "speaker.slash")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
 
                         HStack {
                             Button(controller.isPlaying ? "Rehearsing..." : "Start Rehearsal") {
@@ -109,8 +135,30 @@ struct PracticeSessionView: View {
                 }
 
                 Section("Quick Note") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 7) {
+                            ForEach(NoteTag.allCases) { tag in
+                                Button {
+                                    selectedNoteTag = selectedNoteTag == tag ? nil : tag
+                                } label: {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: tag.icon).font(.caption2)
+                                        Text(tag.rawValue).font(.caption2).fontWeight(.medium)
+                                    }
+                                    .padding(.horizontal, 9).padding(.vertical, 5)
+                                    .background(selectedNoteTag == tag ? tag.color : tag.color.opacity(0.1))
+                                    .foregroundStyle(selectedNoteTag == tag ? .white : tag.color)
+                                    .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 2, trailing: 12))
+
                     TextEditor(text: $noteDraft)
-                        .frame(minHeight: 100)
+                        .frame(minHeight: 80)
 
                     Button("Save Note") {
                         saveNote()
@@ -131,25 +179,41 @@ struct PracticeSessionView: View {
             }
             .navigationTitle("Practice")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        session.selectedCharacter = selectedCharacter
+                        session.currentTurnIndex = controller.currentTurn?.sequenceIndex ?? focusedTurnSequenceIndex
+                        session.memoryMode = hideSelectedDialogue
+                        session.readAloudEnabled = speakSelectedCharacter
+                        isShowingLyrics = true
+                    } label: {
+                        Label("Lyrics", systemImage: "text.alignleft")
                     }
+                    .disabled(selectedCharacter.isEmpty)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
                 }
             }
         }
         .onAppear {
             if let focusedTurn = focusedTurn {
                 selectedCharacter = focusedTurn.characterName
+            } else if let saved = session.selectedCharacter, availableCharacters.contains(saved) {
+                selectedCharacter = saved
             } else if selectedCharacter.isEmpty {
                 selectedCharacter = availableCharacters.first ?? ""
             }
+            hideSelectedDialogue = session.memoryMode
+            speakSelectedCharacter = session.readAloudEnabled
+            speechRate = session.speechRate
             resetSceneSelectionIfNeeded()
         }
         .onDisappear {
             controller.stop()
         }
-        .onChange(of: selectedCharacter) { _, _ in
+        .onChange(of: selectedCharacter) { _, newValue in
+            session.selectedCharacter = newValue
             controller.stop()
             revealCurrentLine = false
             if focusedTurn?.characterName != selectedCharacter {
@@ -161,7 +225,15 @@ struct PracticeSessionView: View {
             revealCurrentLine = false
             if let currentSequenceIndex = controller.currentTurn?.sequenceIndex {
                 focusedTurnSequenceIndex = currentSequenceIndex
+                session.currentTurnIndex = currentSequenceIndex
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             }
+        }
+        .onChange(of: hideSelectedDialogue) { _, v in session.memoryMode = v }
+        .onChange(of: speakSelectedCharacter) { _, v in session.readAloudEnabled = v }
+        .onChange(of: speechRate) { _, v in session.speechRate = v }
+        .fullScreenCover(isPresented: $isShowingLyrics) {
+            LyricsPracticeView(document: document, parseResult: parseResult)
         }
         .onChange(of: onlyScenesWithSelectedCharacter) { _, _ in
             controller.stop()
@@ -357,6 +429,7 @@ struct PracticeSessionView: View {
                 if allowsReveal {
                     Button(revealCurrentLine ? "Hide Line" : "Reveal Line") {
                         revealCurrentLine.toggle()
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     }
                     .buttonStyle(.bordered)
 
@@ -391,7 +464,8 @@ struct PracticeSessionView: View {
             selectedCharacter: selectedCharacter,
             responseWindow: responseWindow,
             betweenTurnsPause: betweenTurnsPause,
-            speakSelectedCharacter: speakSelectedCharacter
+            speakSelectedCharacter: speakSelectedCharacter,
+            speechRate: speechRate
         )
     }
 
@@ -405,6 +479,7 @@ struct PracticeSessionView: View {
             documentId: document.id,
             pageIndex: activeTurn.pageIndex,
             text: trimmed,
+            tag: selectedNoteTag,
             dialogueTurnSequenceIndex: activeTurn.sequenceIndex,
             anchoredCharacterName: activeTurn.characterName,
             anchoredDialogueSnippet: String(activeTurn.dialogue.prefix(160)),
@@ -414,6 +489,16 @@ struct PracticeSessionView: View {
         modelContext.insert(note)
         try? modelContext.save()
         noteDraft = ""
+        selectedNoteTag = nil
+    }
+
+    private func speedLabel(_ rate: Float) -> String {
+        switch rate {
+        case ..<0.25: return "Slow"
+        case 0.25..<0.45: return "Normal"
+        case 0.45..<0.6: return "Fast"
+        default: return "Very fast"
+        }
     }
 
     private func resetSceneSelectionIfNeeded() {

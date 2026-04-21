@@ -84,33 +84,34 @@ struct ReaderView: View {
     @State private var selectedColor: SceneAnnotationColor = .blue
     @State private var clearCurrentPageTrigger = 0
     @State private var exportURL: URL?
+    @State private var exportErrorMessage: String?
+    var onPageChanged: ((Int) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            EmbeddedPDFKitRepresentedView(
+                document: document,
+                jumpToPage: $jumpToPage,
+                isAnnotating: isAnnotating,
+                isPencilOnly: isPencilOnly,
+                selectedTool: selectedTool,
+                selectedColor: selectedColor,
+                clearCurrentPageTrigger: clearCurrentPageTrigger,
+                onPageChanged: onPageChanged
+            )
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarLeading) {
                 Button {
                     isAnnotating.toggle()
                 } label: {
-                    Label(isAnnotating ? "Stop Editing" : "Annotate", systemImage: isAnnotating ? "pencil.circle.fill" : "pencil.circle")
+                    Image(systemName: isAnnotating ? "pencil.circle.fill" : "pencil.circle")
+                        .foregroundStyle(isAnnotating ? .orange : .primary)
                 }
 
-                Button {
-                    exportAnnotatedPDF()
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                }
-
-                Spacer()
-
-                Toggle("Pencil Only", isOn: $isPencilOnly)
-                    .labelsHidden()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
-
-            if isAnnotating {
-                HStack {
+                if isAnnotating {
+                    // Tool picker
                     Menu {
                         ForEach(SceneAnnotationTool.allCases) { tool in
                             Button {
@@ -120,56 +121,59 @@ struct ReaderView: View {
                             }
                         }
                     } label: {
-                        Label(selectedTool.title, systemImage: selectedTool.systemImage)
+                        Image(systemName: selectedTool.systemImage)
                     }
 
+                    // Color picker
                     Menu {
                         ForEach(SceneAnnotationColor.allCases) { color in
                             Button {
                                 selectedColor = color
                             } label: {
-                                HStack {
-                                    Circle()
-                                        .fill(color.color)
-                                        .frame(width: 14, height: 14)
-                                    Text(color.title)
-                                }
+                                Label(color.title, systemImage: "circle.fill")
                             }
                         }
                     } label: {
                         Circle()
                             .fill(selectedColor.color)
-                            .frame(width: 20, height: 20)
+                            .frame(width: 18, height: 18)
                     }
-
-                    Spacer()
 
                     Button(role: .destructive) {
                         clearCurrentPageTrigger += 1
                     } label: {
-                        Label("Clear Page", systemImage: "trash")
+                        Image(systemName: "trash")
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.thinMaterial)
             }
 
-            EmbeddedPDFKitRepresentedView(
-                document: document,
-                jumpToPage: $jumpToPage,
-                isAnnotating: isAnnotating,
-                isPencilOnly: isPencilOnly,
-                selectedTool: selectedTool,
-                selectedColor: selectedColor,
-                clearCurrentPageTrigger: clearCurrentPageTrigger
-            )
-            .ignoresSafeArea(edges: .bottom)
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    exportAnnotatedPDF()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+
+                Toggle(isOn: $isPencilOnly) {
+                    Image(systemName: isPencilOnly ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
+                }
+                .toggleStyle(.button)
+                .tint(.orange)
+            }
         }
+        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: exportSheetBinding) {
             if let exportURL {
                 ActivityView(items: [exportURL])
             }
+        }
+        .alert("Export Failed", isPresented: Binding(
+            get: { exportErrorMessage != nil },
+            set: { if !$0 { exportErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportErrorMessage ?? AppError.exportFailed.localizedDescription)
         }
     }
 
@@ -178,6 +182,7 @@ struct ReaderView: View {
             exportURL = try PDFExportService.exportAnnotatedPDF(for: document, from: modelContext)
         } catch {
             Log.pdf.error("Export failed: \(String(describing: error))")
+            exportErrorMessage = error.localizedDescription
         }
     }
 
@@ -202,6 +207,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
     let selectedTool: SceneAnnotationTool
     let selectedColor: SceneAnnotationColor
     let clearCurrentPageTrigger: Int
+    var onPageChanged: ((Int) -> Void)?
 
     func makeUIView(context: Context) -> EmbeddedReaderContainerView {
         let view = EmbeddedReaderContainerView()
@@ -213,7 +219,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         context.coordinator.configure(containerView: uiView, document: document, modelContext: modelContext)
 
         do {
-            guard let url = document.fileURL else { throw AppError.pdfOpenFailed }
+            guard let url = document.resolvedFileURL else { throw AppError.pdfOpenFailed }
             let data = try Data(contentsOf: url)
             guard let loadedDocument = PDFDocument(data: data) else { throw AppError.pdfOpenFailed }
             if uiView.pdfView.document == nil || uiView.pdfView.document?.pageCount != loadedDocument.pageCount {
@@ -234,6 +240,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             context.coordinator.setTool(selectedTool, color: selectedColor)
             context.coordinator.setAnnotationMode(isAnnotating)
             context.coordinator.handleClearTrigger(clearCurrentPageTrigger)
+            context.coordinator.onPageChanged = onPageChanged
         } catch {
             Log.pdf.error("PDF load error: \(String(describing: error))")
         }
@@ -258,6 +265,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         private var selectedTool: SceneAnnotationTool = .pen
         private var selectedColor: SceneAnnotationColor = .blue
         private var lastClearTrigger = 0
+        var onPageChanged: ((Int) -> Void)?
 
         func configure(containerView: EmbeddedReaderContainerView, document: ScriptDocument, modelContext: ModelContext) {
             self.containerView = containerView
@@ -475,7 +483,20 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 self.persistCurrentCanvasIfNeeded()
                 let pageIndex = pdfView.document?.index(for: page) ?? self.loadedPageIndex
                 self.loadDrawing(for: pageIndex)
+                self.onPageChanged?(pageIndex)
+                let totalPages = pdfView.document?.pageCount ?? 0
+                self.updateReadingSession(pageIndex: pageIndex, totalPages: totalPages)
             }
+        }
+
+        private func updateReadingSession(pageIndex: Int, totalPages: Int) {
+            guard let document, let modelContext else { return }
+            ReadingSessionService.update(
+                documentId: document.id,
+                pageIndex: pageIndex,
+                totalPages: totalPages,
+                in: modelContext
+            )
         }
 
         deinit {

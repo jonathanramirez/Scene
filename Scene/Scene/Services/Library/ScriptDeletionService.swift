@@ -5,12 +5,17 @@ import SwiftData
 enum ScriptDeletionService {
     static func delete(document: ScriptDocument, from context: ModelContext) throws {
         let documentID = document.id
-        let fileURL = document.fileURL
+        let fileURL = document.resolvedFileURL
 
         try deleteRecords(of: ScriptDrawing.self, matching: #Predicate<ScriptDrawing> { $0.documentId == documentID }, from: context)
         try deleteRecords(of: ScriptNote.self, matching: #Predicate<ScriptNote> { $0.documentId == documentID }, from: context)
         try deleteRecords(of: ScriptBookmark.self, matching: #Predicate<ScriptBookmark> { $0.documentId == documentID }, from: context)
         try deleteRecords(of: ScriptReadingSession.self, matching: #Predicate<ScriptReadingSession> { $0.documentId == documentID }, from: context)
+        try deleteRecords(of: ScriptCoverage.self, matching: #Predicate<ScriptCoverage> { $0.documentId == documentID }, from: context)
+
+        // Evict thumbnail and parse cache before deleting the document record
+        ThumbnailCacheService.evict(for: documentID.uuidString)
+        ParseCacheService.invalidate(documentId: documentID, context: context)
 
         context.delete(document)
         try context.save()

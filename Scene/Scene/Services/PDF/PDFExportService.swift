@@ -7,7 +7,7 @@ import UIKit
 @MainActor
 enum PDFExportService {
     static func exportAnnotatedPDF(for document: ScriptDocument, from context: ModelContext) throws -> URL {
-        guard let sourceURL = document.fileURL else {
+        guard let sourceURL = document.resolvedFileURL else {
             throw AppError.noFileURL
         }
 

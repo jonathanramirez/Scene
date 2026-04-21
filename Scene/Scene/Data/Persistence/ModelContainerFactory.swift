@@ -9,7 +9,9 @@ enum ModelContainerFactory {
             ScriptNote.self,
             ScriptBookmark.self,
             ScriptTag.self,
-            ScriptReadingSession.self
+            ScriptReadingSession.self,
+            ScriptCoverage.self,
+            ScriptParseCache.self
         ])
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)

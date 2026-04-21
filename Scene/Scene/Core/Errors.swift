@@ -7,6 +7,9 @@ enum AppError: LocalizedError {
     case pdfOpenFailed
     case noFileURL
     case deleteFailed
+    case parseFailed
+    case fileMissing
+    case exportFailed
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +19,9 @@ enum AppError: LocalizedError {
         case .pdfOpenFailed: return "Could not open PDF."
         case .noFileURL: return "No file URL on document."
         case .deleteFailed: return "Could not delete the script."
+        case .parseFailed: return "Could not index this script. The PDF may be scanned or image-only."
+        case .fileMissing: return "The PDF file could not be found. It may have been moved or deleted."
+        case .exportFailed: return "Export failed. Please try again."
         }
     }
 }
