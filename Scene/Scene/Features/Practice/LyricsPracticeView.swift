@@ -4,6 +4,7 @@ import SwiftUI
 
 struct LyricsPracticeView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Environment(ScriptSessionStore.self) private var sessionStore
 
     let document: ScriptDocument
@@ -168,11 +169,20 @@ struct LyricsPracticeView: View {
         }
         .ignoresSafeArea(edges: .bottom)
         .onDisappear { controller.stop() }
-        .onChange(of: selectedCharacter) { _, v in session.selectedCharacter = v }
+        .onChange(of: selectedCharacter) { _, v in
+            session.selectedCharacter = v
+            ReadingSessionService.updateRehearsal(
+                documentId: document.id,
+                selectedCharacter: v,
+                lastMode: "lyrics",
+                in: modelContext
+            )
+        }
         .onChange(of: hideMyLines) { _, v in session.memoryMode = v }
         .onChange(of: speakMyLines) { _, v in session.readAloudEnabled = v }
         .onChange(of: controller.currentTurn?.sequenceIndex ?? -1) { _, _ in
             session.currentTurnIndex = controller.currentTurn?.sequenceIndex
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         }
         .sheet(isPresented: $isShowingAppearance) {
             LyricsSettingsView()
@@ -360,7 +370,8 @@ struct LyricsPracticeView: View {
         let isMyTurn = turn.characterName == selectedCharacter
 
         if isActive && isMyTurn && hideMyLines && !revealCurrentLine {
-            withAnimation(.easeInOut(duration: 0.2)) { revealCurrentLine = true }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { revealCurrentLine = true }
             return
         }
 

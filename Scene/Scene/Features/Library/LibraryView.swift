@@ -46,27 +46,52 @@ struct LibraryView: View {
     }
 
     private var libraryList: some View {
-        List {
+        Group {
             if docs.isEmpty {
-                ContentUnavailableView {
-                    Label("No Scripts Yet", systemImage: "books.vertical")
-                } description: {
-                    Text("Import a screenplay PDF to get started.")
-                } actions: {
-                    Button {
-                        isImporting = true
-                    } label: {
-                        Label("Import PDF", systemImage: "plus.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .listRowBackground(Color.clear)
+                emptyState
             } else {
-                ForEach(docs) { doc in
-                    scriptRow(for: doc)
+                List {
+                    ForEach(docs) { doc in
+                        scriptRow(for: doc)
+                    }
                 }
             }
         }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            Image(systemName: "books.vertical")
+                .font(.system(size: 52))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 6) {
+                Text("No Scripts Yet")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Text("Import a screenplay PDF to get started.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                isImporting = true
+            } label: {
+                Label("Import PDF", systemImage: "plus.circle.fill")
+                    .padding(.horizontal, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .padding(.top, 4)
+
+            Spacer()
+            Spacer()
+        }
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func scriptRow(for document: ScriptDocument) -> some View {

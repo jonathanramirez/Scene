@@ -5,74 +5,6 @@ import PencilKit
 import SwiftData
 internal import os
 
-private enum SceneAnnotationTool: String, CaseIterable, Identifiable {
-    case pen
-    case highlighter
-    case eraser
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .pen: return "Pen"
-        case .highlighter: return "Highlighter"
-        case .eraser: return "Eraser"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .pen: return "pencil.tip"
-        case .highlighter: return "highlighter"
-        case .eraser: return "eraser"
-        }
-    }
-
-    var inkType: PKInkingTool.InkType {
-        switch self {
-        case .pen: return .pen
-        case .highlighter: return .marker
-        case .eraser: return .pen
-        }
-    }
-
-    var width: CGFloat {
-        switch self {
-        case .pen: return 5
-        case .highlighter: return 18
-        case .eraser: return 10
-        }
-    }
-}
-
-private enum SceneAnnotationColor: String, CaseIterable, Identifiable {
-    case blue
-    case red
-    case green
-    case black
-
-    var id: String { rawValue }
-
-    var title: String { rawValue.capitalized }
-
-    var color: Color {
-        switch self {
-        case .blue: return .blue
-        case .red: return .red
-        case .green: return .green
-        case .black: return .black
-        }
-    }
-
-    var uiColor: UIColor {
-        switch self {
-        case .blue: return .systemBlue
-        case .red: return .systemRed
-        case .green: return .systemGreen
-        case .black: return .black
-        }
-    }
-}
 
 struct ReaderView: View {
     @Environment(\.modelContext) private var modelContext
@@ -80,8 +12,6 @@ struct ReaderView: View {
     @Binding var jumpToPage: Int?
     @State private var isAnnotating = false
     @State private var isPencilOnly = false
-    @State private var selectedTool: SceneAnnotationTool = .pen
-    @State private var selectedColor: SceneAnnotationColor = .blue
     @State private var clearCurrentPageTrigger = 0
     @State private var exportURL: URL?
     @State private var exportErrorMessage: String?
@@ -94,74 +24,54 @@ struct ReaderView: View {
                 jumpToPage: $jumpToPage,
                 isAnnotating: isAnnotating,
                 isPencilOnly: isPencilOnly,
-                selectedTool: selectedTool,
-                selectedColor: selectedColor,
                 clearCurrentPageTrigger: clearCurrentPageTrigger,
                 onPageChanged: onPageChanged
             )
             .ignoresSafeArea(edges: .bottom)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .topBarLeading) {
+            // Single orange toggle — PKToolPicker floats natively when active
+            ToolbarItem(placement: .topBarLeading) {
                 Button {
                     isAnnotating.toggle()
                 } label: {
-                    Image(systemName: isAnnotating ? "pencil.circle.fill" : "pencil.circle")
-                        .foregroundStyle(isAnnotating ? .orange : .primary)
-                }
-
-                if isAnnotating {
-                    // Tool picker
-                    Menu {
-                        ForEach(SceneAnnotationTool.allCases) { tool in
-                            Button {
-                                selectedTool = tool
-                            } label: {
-                                Label(tool.title, systemImage: tool.systemImage)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: selectedTool.systemImage)
-                    }
-
-                    // Color picker
-                    Menu {
-                        ForEach(SceneAnnotationColor.allCases) { color in
-                            Button {
-                                selectedColor = color
-                            } label: {
-                                Label(color.title, systemImage: "circle.fill")
-                            }
-                        }
-                    } label: {
-                        Circle()
-                            .fill(selectedColor.color)
-                            .frame(width: 18, height: 18)
-                    }
-
-                    Button(role: .destructive) {
-                        clearCurrentPageTrigger += 1
-                    } label: {
-                        Image(systemName: "trash")
-                    }
+                    Image(systemName: isAnnotating ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
+                        .foregroundStyle(.orange)
                 }
             }
 
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    exportAnnotatedPDF()
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        exportAnnotatedPDF()
+                    } label: {
+                        Label("Export PDF", systemImage: "square.and.arrow.up")
+                    }
 
-                Toggle(isOn: $isPencilOnly) {
-                    Image(systemName: isPencilOnly ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
+                    Divider()
+
+                    Button {
+                        isPencilOnly.toggle()
+                    } label: {
+                        Label(
+                            isPencilOnly ? "Pencil Only: On" : "Pencil Only: Off",
+                            systemImage: isPencilOnly ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle"
+                        )
+                    }
+
+                    if isAnnotating {
+                        Divider()
+                        Button(role: .destructive) {
+                            clearCurrentPageTrigger += 1
+                        } label: {
+                            Label("Clear Page", systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-                .toggleStyle(.button)
-                .tint(.orange)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: exportSheetBinding) {
             if let exportURL {
                 ActivityView(items: [exportURL])
@@ -204,8 +114,6 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
     @Binding var jumpToPage: Int?
     let isAnnotating: Bool
     let isPencilOnly: Bool
-    let selectedTool: SceneAnnotationTool
-    let selectedColor: SceneAnnotationColor
     let clearCurrentPageTrigger: Int
     var onPageChanged: ((Int) -> Void)?
 
@@ -237,7 +145,6 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             }
 
             context.coordinator.setPencilOnly(isPencilOnly)
-            context.coordinator.setTool(selectedTool, color: selectedColor)
             context.coordinator.setAnnotationMode(isAnnotating)
             context.coordinator.handleClearTrigger(clearCurrentPageTrigger)
             context.coordinator.onPageChanged = onPageChanged
@@ -262,8 +169,6 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         private var loadedPageIndex = 0
         private var pageChangedObserver: NSObjectProtocol?
         private var pageOverlayViews: [Int: UIImageView] = [:]
-        private var selectedTool: SceneAnnotationTool = .pen
-        private var selectedColor: SceneAnnotationColor = .blue
         private var lastClearTrigger = 0
         var onPageChanged: ((Int) -> Void)?
 
@@ -272,7 +177,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             self.document = document
             self.modelContext = modelContext
             containerView.canvasView.delegate = self
-            containerView.canvasView.tool = currentPKTool()
+            containerView.canvasView.tool = PKInkingTool(.pen, color: .systemBlue, width: 5)
             containerView.pdfView.pageOverlayViewProvider = self
             installPageObserverIfNeeded(for: containerView.pdfView)
         }
@@ -307,12 +212,6 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
 
         func setPencilOnly(_ isPencilOnly: Bool) {
             containerView?.canvasView.drawingPolicy = isPencilOnly ? .pencilOnly : .anyInput
-        }
-
-        func setTool(_ tool: SceneAnnotationTool, color: SceneAnnotationColor) {
-            selectedTool = tool
-            selectedColor = color
-            containerView?.canvasView.tool = currentPKTool()
         }
 
         func handleClearTrigger(_ trigger: Int) {
@@ -455,15 +354,6 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
 
         private func containerCanvasHiddenState() -> Bool {
             containerView?.canvasView.isHidden ?? true
-        }
-
-        private func currentPKTool() -> PKTool {
-            switch selectedTool {
-            case .eraser:
-                return PKEraserTool(.vector)
-            case .pen, .highlighter:
-                return PKInkingTool(selectedTool.inkType, color: selectedColor.uiColor, width: selectedTool.width)
-            }
         }
 
         private func installPageObserverIfNeeded(for pdfView: PDFView) {

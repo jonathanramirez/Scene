@@ -214,6 +214,12 @@ struct PracticeSessionView: View {
         }
         .onChange(of: selectedCharacter) { _, newValue in
             session.selectedCharacter = newValue
+            ReadingSessionService.updateRehearsal(
+                documentId: document.id,
+                selectedCharacter: newValue,
+                lastMode: "practice",
+                in: modelContext
+            )
             controller.stop()
             revealCurrentLine = false
             if focusedTurn?.characterName != selectedCharacter {
@@ -428,7 +434,9 @@ struct PracticeSessionView: View {
 
                 if allowsReveal {
                     Button(revealCurrentLine ? "Hide Line" : "Reveal Line") {
-                        revealCurrentLine.toggle()
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            revealCurrentLine.toggle()
+                        }
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     }
                     .buttonStyle(.bordered)
@@ -436,6 +444,10 @@ struct PracticeSessionView: View {
                     if revealCurrentLine {
                         Text(turn.dialogue)
                             .font(.body)
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .move(edge: .top)),
+                                removal: .opacity
+                            ))
                     }
                 }
             } else {

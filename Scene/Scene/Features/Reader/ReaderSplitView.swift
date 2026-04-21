@@ -18,6 +18,7 @@ struct ReaderSplitView: View {
     @State private var currentPageIndex = 0
     @State private var isShowingAddBookmark = false
     @State private var bookmarkLabelDraft = ""
+    @State private var selectedCharacterForDetail: ScriptCharacter? = nil
 
     @Query(sort: \ScriptBookmark.createdAt, order: .reverse)
     private var allBookmarks: [ScriptBookmark]
@@ -35,90 +36,153 @@ struct ReaderSplitView: View {
     var body: some View {
         NavigationSplitView {
             List {
-                // Index status row
-                if vm.isParsing {
-                    HStack {
-                        ProgressView().scaleEffect(0.75)
-                        Text("Indexing…").font(.caption).foregroundStyle(.secondary)
-                    }
-                } else if let at = vm.indexedAt {
-                    Label("Indexed \(at.formatted(.relative(presentation: .named)))", systemImage: "checkmark.circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
+                // ── Rehearse cards ─────────────────────────────────────
+                if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
+                    Section {
+                        HStack(spacing: 10) {
+                            rehearseCard(
+                                icon: "mic.fill", label: "Practice", tint: .orange
+                            ) { isShowingPractice = true }
+
+                            rehearseCard(
+                                icon: "text.alignleft", label: "Lyrics", tint: .purple
+                            ) { isShowingLyrics = true }
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 4, trailing: 12))
                         .listRowBackground(Color.clear)
-                }
 
-                Section("Scenes") {
-                    if vm.parseResult == nil && !vm.isParsing {
-                        emptyIndexState
-                    } else if let parseResult = vm.parseResult, parseResult.scenes.isEmpty {
-                        Text("No scene headings detected.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(vm.parseResult?.scenes ?? []) { scene in
-                            if let parseResult = vm.parseResult {
-                                NavigationLink {
-                                    SceneDetailView(scene: scene, parseResult: parseResult) { page in
-                                        vm.jumpToPage = page
-                                    }
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("#\(scene.index) \(scene.heading)")
-                                            .lineLimit(2)
-                                        Text("Page \(scene.startPage + 1)")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.vertical, 4)
-                                }
-                            }
+                        Text("\(parseResult.dialogueTurns.count) turns · \(filteredCharacters.count) characters")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    } header: {
+                        Text("Rehearse")
+                    }
+                } else if vm.parseResult == nil && !vm.isParsing {
+                    Section {
+                        Button {
+                            Task { await vm.buildIndex(for: document, context: context, forceRebuild: true) }
+                        } label: {
+                            Label("Build Index to Rehearse", systemImage: "wand.and.stars")
                         }
+                        .font(.subheadline)
                     }
                 }
 
-                Section("Practice") {
-                    if let parseResult = vm.parseResult {
-                        if parseResult.dialogueTurns.isEmpty {
-                            Text("No dialogue turns detected yet.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                // ── Scenes ─────────────────────────────────────────────
+                Section {
+                    if vm.isParsing {
+                        HStack(spacing: 8) {
+                            ProgressView().scaleEffect(0.75)
+                            Text("Indexing…").font(.caption).foregroundStyle(.secondary)
+                        }
+                    } else if let parseResult = vm.parseResult {
+                        if parseResult.scenes.isEmpty {
+                            Text("No scene headings found.")
+                                .font(.caption).foregroundStyle(.secondary)
                         } else {
-                            Button {
-                                isShowingPractice = true
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Open Practice Mode")
-                                    Text("\(parseResult.dialogueTurns.count) dialogue turns ready")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                            ForEach(parseResult.scenes) { scene in
+                                Button {
+                                    vm.jumpToPage = scene.startPage
+                                } label: {
+                                    HStack(spacing: 0) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("#\(scene.index) \(scene.heading)")
+                                                .font(.subheadline)
+                                                .lineLimit(2)
+                                                .foregroundStyle(.primary)
+                                            Text("p\(scene.startPage + 1)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "arrow.right")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.vertical, 3)
                                 }
-                            }
-
-                            Button {
-                                isShowingLyrics = true
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Label("Lyrics Mode", systemImage: "text.alignleft")
-                                    Text("Scrolling highlight, like Apple Music")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                    } else {
-                        Text("Build the index to unlock rehearsal mode.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+
+                        // Non-standard format hint
+                        if parseResult.scenes.isEmpty || parseResult.dialogueTurns.isEmpty {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange).font(.caption2)
+                                Text("This PDF may not follow standard screenplay format.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 2)
+                            .listRowBackground(Color.orange.opacity(0.06))
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Scenes")
+                        Spacer()
+                        if vm.isParsing {
+                            ProgressView().scaleEffect(0.6)
+                        } else if vm.indexedAt != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption2)
+                        }
                     }
                 }
 
-                Section("Bookmarks") {
-                    if bookmarks.isEmpty {
-                        Text("No bookmarks yet. Tap the bookmark icon while reading.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
+                // ── Characters ────────────────────────────────────────
+                if !filteredCharacters.isEmpty {
+                    Section {
+                        ForEach(filteredCharacters) { c in
+                            HStack(spacing: 0) {
+                                // Tap row → jump PDF to character's first page
+                                Button {
+                                    if let page = c.firstPage { vm.jumpToPage = page }
+                                } label: {
+                                    HStack {
+                                        Text(c.name)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        if let turns = dialogueTurnCounts[c.name] {
+                                            Text("\(turns)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .padding(.vertical, 1)
+                                }
+                                .buttonStyle(.plain)
+
+                                // Info button → opens CharacterDetailView as sheet
+                                if vm.parseResult != nil {
+                                    Button {
+                                        selectedCharacterForDetail = c
+                                    } label: {
+                                        Image(systemName: "info.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                            .padding(.leading, 10)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Characters")
+                            Spacer()
+                            Text("\(filteredCharacters.count)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                // ── Bookmarks (only when non-empty) ───────────────────
+                if !bookmarks.isEmpty {
+                    Section("Bookmarks") {
                         ForEach(bookmarks) { bookmark in
                             Button {
                                 vm.jumpToPage = bookmark.pageIndex
@@ -127,13 +191,13 @@ struct ReaderSplitView: View {
                                     Image(systemName: "bookmark.fill")
                                         .foregroundStyle(.orange)
                                         .frame(width: 14)
-                                    VStack(alignment: .leading, spacing: 2) {
+                                    VStack(alignment: .leading, spacing: 1) {
                                         Text(bookmark.label ?? "Page \(bookmark.pageIndex + 1)")
                                             .font(.subheadline)
                                             .foregroundStyle(.primary)
                                         if bookmark.label != nil {
-                                            Text("Page \(bookmark.pageIndex + 1)")
-                                                .font(.caption)
+                                            Text("p\(bookmark.pageIndex + 1)")
+                                                .font(.caption2)
                                                 .foregroundStyle(.secondary)
                                         }
                                     }
@@ -147,39 +211,6 @@ struct ReaderSplitView: View {
                                     try? context.save()
                                 } label: {
                                     Label("Delete", systemImage: "trash")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Section("Characters") {
-                    if let parseResult = vm.parseResult, parseResult.characters.isEmpty {
-                        Text("No screenplay character cues found in this PDF.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(vm.parseResult?.characters ?? []) { c in
-                            if let parseResult = vm.parseResult {
-                                NavigationLink {
-                                    CharacterDetailView(character: c, parseResult: parseResult) { page in
-                                        vm.jumpToPage = page
-                                    }
-                                } label: {
-                                    HStack {
-                                        Text(c.name)
-                                        Spacer()
-                                        if let turnCount = dialogueTurnCounts[c.name] {
-                                            Text("\(turnCount) turns")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        if let p = c.firstPage {
-                                            Text("p\(p + 1)")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -201,6 +232,7 @@ struct ReaderSplitView: View {
             }
 
             await vm.buildIndex(for: document, context: context)
+            restoreRehearsalState()
             autoOpenPracticeIfNeeded()
         }
         .onChange(of: vm.parseResult?.dialogueTurns.count ?? 0) { _, _ in
@@ -222,6 +254,21 @@ struct ReaderSplitView: View {
                 }
             }
         }
+        .sheet(item: $selectedCharacterForDetail) { character in
+            if let parseResult = vm.parseResult {
+                NavigationStack {
+                    CharacterDetailView(character: character, parseResult: parseResult) { page in
+                        vm.jumpToPage = page
+                        selectedCharacterForDetail = nil
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { selectedCharacterForDetail = nil }
+                        }
+                    }
+                }
+            }
+        }
         .fullScreenCover(isPresented: $isShowingLyrics) {
             if let parseResult = vm.parseResult {
                 LyricsPracticeView(document: document, parseResult: parseResult)
@@ -234,8 +281,9 @@ struct ReaderSplitView: View {
                 currentPageIndex = page
                 sessionStore.session(for: document.id).currentPage = page
             })
-            .navigationTitle(document.title)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Bookmark
@@ -246,9 +294,9 @@ struct ReaderSplitView: View {
                         Image(systemName: "bookmark")
                     }
 
-                    // Rehearse menu — only when dialogue is indexed
-                    if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
-                        Menu {
+                    // Rehearse menu — practice, lyrics, search + index management
+                    Menu {
+                        if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
                             Button {
                                 isShowingPractice = true
                             } label: {
@@ -268,24 +316,28 @@ struct ReaderSplitView: View {
                             } label: {
                                 Label("Search Script", systemImage: "magnifyingglass")
                             }
-                        } label: {
-                            Label("Rehearse", systemImage: "theatermasks")
-                        }
-                    }
 
-                    // Index button
-                    if vm.isParsing {
-                        ProgressView()
-                    } else {
-                        Menu {
+                            Divider()
+                        }
+
+                        if vm.isParsing {
+                            Label("Indexing…", systemImage: "gearshape")
+                        } else {
                             Button {
                                 Task { await vm.buildIndex(for: document, context: context, forceRebuild: true) }
                             } label: {
-                                Label(vm.indexedAt != nil ? "Reindex Script" : "Build Index", systemImage: "wand.and.stars")
+                                Label(
+                                    vm.indexedAt != nil ? "Reindex Script" : "Build Index",
+                                    systemImage: "wand.and.stars"
+                                )
                             }
-                        } label: {
-                            Image(systemName: vm.indexedAt != nil ? "checkmark.circle" : "wand.and.stars")
-                                .foregroundStyle(vm.indexedAt != nil ? .green : .secondary)
+                        }
+                    } label: {
+                        if vm.isParsing {
+                            ProgressView()
+                        } else {
+                            Label("Rehearse", systemImage: "theatermasks")
+                                .symbolVariant(vm.indexedAt != nil ? .none : .none)
                         }
                     }
                 }
@@ -318,6 +370,28 @@ struct ReaderSplitView: View {
         }
     }
 
+    /// Seeds the in-memory ScriptSessionState from the persisted ScriptReadingSession
+    /// so the app remembers the last rehearsed character across app restarts.
+    private func restoreRehearsalState() {
+        let state = sessionStore.session(for: document.id)
+        // Only restore when nothing is set yet (avoids stomping a fresh in-session pick)
+        guard state.selectedCharacter == nil else { return }
+
+        // Capture UUID into a plain local — required for #Predicate to work correctly
+        let docID = document.id
+        var descriptor = FetchDescriptor<ScriptReadingSession>(
+            predicate: #Predicate { $0.documentId == docID }
+        )
+        descriptor.fetchLimit = 1
+        descriptor.sortBy = [SortDescriptor(\.updatedAt, order: .reverse)]
+
+        guard let saved = try? context.fetch(descriptor).first,
+              let character = saved.selectedCharacter,
+              !character.isEmpty else { return }
+
+        state.selectedCharacter = character
+    }
+
     private func autoOpenPracticeIfNeeded() {
         guard !hasAutoOpenedPractice,
               initialPracticeTurnSequenceIndex != nil,
@@ -328,16 +402,35 @@ struct ReaderSplitView: View {
         isShowingPractice = true
     }
 
-    private var emptyIndexState: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Index not built yet.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button("Build Index") {
-                Task { await vm.buildIndex(for: document, context: context, forceRebuild: true) }
-            }
-            .font(.caption)
+    /// Characters with at least one letter — filters out parser false-positives like "2." or "IV."
+    private var filteredCharacters: [ScriptCharacter] {
+        (vm.parseResult?.characters ?? []).filter { c in
+            c.name.count >= 2 && c.name.contains(where: { $0.isLetter })
         }
+    }
+
+    @ViewBuilder
+    private func rehearseCard(
+        icon: String,
+        label: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.title3)
+                Text(label)
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(tint.opacity(0.12))
+            .foregroundStyle(tint)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
     }
 
     private var fileMissingPlaceholder: some View {

@@ -15,6 +15,10 @@ final class ScriptReadingSession {
     var progress: Double
     var updatedAt: Date
 
+    // Rehearsal context — restored on next launch so the app feels smart
+    var selectedCharacter: String?
+    var lastMode: String?          // "reader" | "practice" | "lyrics"
+
     var mode: ReadingMode {
         get { ReadingMode(rawValue: modeRaw) ?? .firstRead }
         set { modeRaw = newValue.rawValue }
@@ -27,5 +31,7 @@ final class ScriptReadingSession {
         self.lastPageIndex = 0
         self.progress = 0
         self.updatedAt = Date()
+        self.selectedCharacter = nil
+        self.lastMode = nil
     }
 }

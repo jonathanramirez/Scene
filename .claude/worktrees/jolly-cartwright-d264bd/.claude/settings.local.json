@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/jonathan.ramirez/Dev/Demos/Scene branch -D claude/jolly-cartwright-d264bd)"
+    ]
+  }
+}
