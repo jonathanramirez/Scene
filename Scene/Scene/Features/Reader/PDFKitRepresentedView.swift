@@ -22,7 +22,7 @@ struct PDFKitRepresentedView: UIViewRepresentable {
 
         do {
             let resolvedURL = try resolveDocumentURL(for: document)
-            let loadedDocument = try loadDocument(from: resolvedURL, bookmark: document.bookmarkData)
+            let loadedDocument = try loadDocument(from: resolvedURL, bookmark: nil)
             if uiView.pdfView.document == nil || uiView.pdfView.document?.pageCount != loadedDocument.pageCount {
                 uiView.pdfView.document = loadedDocument
             }
@@ -53,40 +53,13 @@ struct PDFKitRepresentedView: UIViewRepresentable {
     }
 
     private func resolveDocumentURL(for document: ScriptDocument) throws -> URL {
-        guard let url = document.fileURL else {
+        guard let url = document.resolvedFileURL else {
             throw AppError.pdfOpenFailed
         }
-        return try resolveBookmarkIfNeeded(url: url, bookmark: document.bookmarkData)
-    }
-
-    private func resolveBookmarkIfNeeded(url: URL, bookmark: Data?) throws -> URL {
-        guard let bookmark else { return url }
-        var stale = false
-        #if os(macOS)
-        return try URL(
-            resolvingBookmarkData: bookmark,
-            options: [.withSecurityScope],
-            relativeTo: nil,
-            bookmarkDataIsStale: &stale
-        )
-        #else
-        return try URL(
-            resolvingBookmarkData: bookmark,
-            options: [],
-            relativeTo: nil,
-            bookmarkDataIsStale: &stale
-        )
-        #endif
+        return url
     }
 
     private func loadDocument(from url: URL, bookmark: Data?) throws -> PDFDocument {
-        let hasSecurityScope = bookmark != nil ? url.startAccessingSecurityScopedResource() : false
-        defer {
-            if hasSecurityScope {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
         let data = try Data(contentsOf: url)
         guard let document = PDFDocument(data: data) else {
             throw AppError.pdfOpenFailed

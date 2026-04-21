@@ -14,21 +14,26 @@ final class ScriptNote {
     var updatedAt: Date
 
     var kindRaw: String
+    var tagRaw: String?
     var pageIndex: Int
     var text: String
     var dialogueTurnSequenceIndex: Int?
     var anchoredCharacterName: String?
     var anchoredDialogueSnippet: String?
     var anchoredQualifier: String?
-
-    // Optional highlight rect stored as string: "x,y,w,h"
     var rectString: String?
+
+    var tag: NoteTag? {
+        get { tagRaw.flatMap { NoteTag(rawValue: $0) } }
+        set { tagRaw = newValue?.rawValue }
+    }
 
     init(
         documentId: UUID,
         pageIndex: Int,
         text: String,
         kind: NoteKind = .freeform,
+        tag: NoteTag? = nil,
         rectString: String? = nil,
         dialogueTurnSequenceIndex: Int? = nil,
         anchoredCharacterName: String? = nil,
@@ -40,6 +45,7 @@ final class ScriptNote {
         self.createdAt = Date()
         self.updatedAt = Date()
         self.kindRaw = kind.rawValue
+        self.tagRaw = tag?.rawValue
         self.pageIndex = pageIndex
         self.text = text
         self.dialogueTurnSequenceIndex = dialogueTurnSequenceIndex
