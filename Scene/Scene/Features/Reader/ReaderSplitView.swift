@@ -51,6 +51,7 @@ struct ReaderSplitView: View {
         .toolbar(.hidden, for: .tabBar)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(removing: .sidebarToggle)
         .task {
             if !hasAppliedInitialNavigation {
                 vm.jumpToPage = initialJumpToPage
@@ -111,11 +112,19 @@ struct ReaderSplitView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .topBarLeading) {
                     Button {
                         dismiss()
                     } label: {
                         Image(systemName: "chevron.left")
+                    }
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.left")
                     }
                 }
 

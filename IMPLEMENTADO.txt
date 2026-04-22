@@ -245,21 +245,26 @@ Sidebar rediseñada (ScrollView + LazyVStack, cards editoriales):
 
 Detail (PDF):
   - Título inline (no large title)
-  - Toolbar izquierdo:
+  - Toolbar izquierdo (en este orden):
       ← Back custom (chevron.left) usando @Environment(\.dismiss)
-      ✏️ Annotate toggle (naranja al activar)
-      Al anotar: selector tool (pen/highlighter/eraser)
-                 selector color (menú)
-                 botón trash (clear page)
-  - Toolbar izquierdo: Share (export PDF anotado)
-  - Toolbar izquierdo: Pencil-only toggle
-  - Toolbar derecho: Bookmark (haptic al guardar)
-  - Toolbar derecho: 🎭 Rehearse menu
-      › Practice Mode
-      › Lyrics Mode
-      › Search Script
-  - Toolbar derecho: Index status
-      ✓ verde (indexado) / wand (sin index) → menú Reindex
+      ☰ Sidebar toggle manual (sidebar.left) que alterna
+        columnVisibility con animación 0.2s
+        (el toggle nativo está oculto con
+         .toolbar(removing: .sidebarToggle) para
+         forzar que Back quede siempre primero)
+  - Toolbar derecho (en este orden):
+      ✏️ Annotate toggle naranja (pencil.tip.crop.circle)
+         Al anotar: PKToolPicker nativo flotante
+      🔖 Bookmark (haptic al guardar)
+      🎭 Rehearse menu
+         › Practice Mode
+         › Lyrics Mode
+         › Search Script
+         › Reindex Script
+      ⋯ Menú más opciones
+         › Export PDF anotado (share)
+         › Pencil Only toggle
+         › Clear Page (cuando annotate está activo)
   - PDF missing → ContentUnavailableView "PDF Not Found"
   - Export fail → Alert con mensaje de error
 

@@ -10,7 +10,7 @@ enum AppError: LocalizedError {
     case parseFailed
     case fileMissing
     case exportFailed
-
+    case fileAccessDenied
     var errorDescription: String? {
         switch self {
         case .generic(let msg): return msg
@@ -22,6 +22,7 @@ enum AppError: LocalizedError {
         case .parseFailed: return "Could not index this script. The PDF may be scanned or image-only."
         case .fileMissing: return "The PDF file could not be found. It may have been moved or deleted."
         case .exportFailed: return "Export failed. Please try again."
+        case .fileAccessDenied:  return "The selected file could not be accessed."
         }
     }
 }

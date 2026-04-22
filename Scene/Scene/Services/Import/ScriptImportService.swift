@@ -6,15 +6,25 @@ import UniformTypeIdentifiers
 final class ScriptImportService {
 
     func importPDF(from url: URL, into context: ModelContext) throws -> ScriptDocument {
-        let localURL = try copyToDocumentsIfNeeded(from: url)
+        let localURL: URL
+
+        do {
+            localURL = try withSecurityScopedAccess(to: url) {
+                try copyToDocumentsWithUniqueName(from: url)
+            }
+        } catch let error as AppError {
+            throw error
+        } catch {
+            throw AppError.generic("Import failed: \(error.localizedDescription)")
+        }
 
         let pageCount = (try? PDFTextExtractor.pageCount(url: localURL)) ?? 0
 
         let doc = ScriptDocument(
             title: localURL.deletingPathExtension().lastPathComponent,
-            originalFileName: url.lastPathComponent,
+            originalFileName: localURL.lastPathComponent,
             fileURL: localURL,
-            bookmarkData: nil, // ⬅️ NO bookmarks en iOS
+            bookmarkData: nil,
             pageCount: pageCount
         )
 
@@ -25,7 +35,20 @@ final class ScriptImportService {
 
     // MARK: - Private
 
-    private func copyToDocumentsIfNeeded(from sourceURL: URL) throws -> URL {
+    private func withSecurityScopedAccess<T>(to url: URL, _ work: () throws -> T) throws -> T {
+        let didStart = url.startAccessingSecurityScopedResource()
+        guard didStart else {
+            throw AppError.fileAccessDenied
+        }
+
+        defer {
+            url.stopAccessingSecurityScopedResource()
+        }
+
+        return try work()
+    }
+
+    private func copyToDocumentsWithUniqueName(from sourceURL: URL) throws -> URL {
         let fm = FileManager.default
         let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         let targetDir = docs.appendingPathComponent("Scripts", isDirectory: true)
@@ -34,14 +57,35 @@ final class ScriptImportService {
             try fm.createDirectory(at: targetDir, withIntermediateDirectories: true)
         }
 
-        let targetURL = targetDir.appendingPathComponent(sourceURL.lastPathComponent)
+        let fileName = uniqueFileName(for: sourceURL.lastPathComponent, in: targetDir)
+        let targetURL = targetDir.appendingPathComponent(fileName)
 
-        // Avoid overwriting existing files
-        if fm.fileExists(atPath: targetURL.path) {
+        do {
+            try fm.copyItem(at: sourceURL, to: targetURL)
             return targetURL
+        } catch {
+            throw AppError.generic("Could not copy the selected PDF into Scene.")
+        }
+    }
+
+    private func uniqueFileName(for originalName: String, in directory: URL) -> String {
+        let fm = FileManager.default
+
+        let ext = (originalName as NSString).pathExtension
+        let base = (originalName as NSString).deletingPathExtension
+
+        var candidate = originalName
+        var counter = 2
+
+        while fm.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
+            if ext.isEmpty {
+                candidate = "\(base) \(counter)"
+            } else {
+                candidate = "\(base) \(counter).\(ext)"
+            }
+            counter += 1
         }
 
-        try fm.copyItem(at: sourceURL, to: targetURL)
-        return targetURL
+        return candidate
     }
 }
