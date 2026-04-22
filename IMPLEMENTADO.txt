@@ -46,13 +46,19 @@ NAVEGACIÓN
   Settings → SettingsView
 
 -----------------------------------------------------------
-LIBRARY
+LIBRARY — rediseñado card-based (con swipe preservado)
 -----------------------------------------------------------
 
-- Lista de scripts con ScriptRowView
-    - Ícono coloreado (48×56 rounded rect, sombra)
-    - Usa document.iconColor.color
-- Empty state con botón "Import PDF"
+- List(.plain) + scrollContentBackground(.hidden) sobre
+  systemGroupedBackground para preservar swipeActions
+- Cada row wrapped en card (radius 14, padding 14,
+  secondarySystemGroupedBackground, hoverEffect(.lift))
+- listRowSeparator(.hidden) + listRowBackground(.clear)
+- ScriptRowView ajustado:
+    Ícono gradient 48×56 con sombra (igual que antes)
+    metadataPill ahora usa Color.primary.opacity(0.06)
+    para integrarse con el fondo de card
+- Empty state centrado con botón "Import PDF"
 - Swipe izquierdo → Edit Metadata
 - Swipe derecho → Delete (con confirmación)
 - Context menu: Edit Metadata / Delete Script
@@ -64,24 +70,69 @@ LIBRARY
     Thumbnail (disco), PDF (disco)
 
 -----------------------------------------------------------
-SCRIPT DETAIL (hub)
+SCRIPT DETAIL (hub) — rediseñado card-based
 -----------------------------------------------------------
 
-- Thumbnail del PDF (cacheado en disco, instantáneo)
-- pageCount, estimatedMinutes, fecha de creación
-- Estado del index: Not indexed / Indexing… / ✓ Indexed X ago
-- Progreso de lectura: ProgressView + página actual
-- Reading Mode: First Read / Second Read (persiste en SwiftData)
-- Acciones:
-    Open Reader / Continue Reading (jump a última página)
-    Practice (requiere index con diálogo)
-    Lyrics Mode
-    Annotate & Draw
-    Coverage
-- Warning visible si el PDF no existe en disco
-- Alert "Index Failed" con opción Retry
-- Sección de Bookmarks con swipe-to-delete
-- indexStats: "18 turns · 4 characters · 3 scenes"
+Mismo lenguaje visual que la nueva sidebar del Reader:
+ScrollView + LazyVStack + cards editoriales sobre
+systemGroupedBackground. Se eliminó el Form/Section nativo.
+
+  Hero card:
+    - Thumbnail 88×120 con sombra suave
+    - Título (title3 semibold, máx 3 líneas)
+    - Meta chips: "N pages", "~N min"
+    - Fecha de creación (caption2 tertiary)
+
+  Missing PDF banner (solo si falta el archivo):
+    - Bloque rojo al 10% con icono triangle.fill
+    - Mensaje de AppError.fileMissing
+
+  Reading Progress card:
+    - ProgressView naranja + "Page X of Y" + "N%"
+    - Pills: "1st/2nd read" (azul), "~N min left" (naranja)
+    - Empty state: "Not started yet" + pills de pageCount/min
+
+  Reading Mode card:
+    - Picker segmented First / Second Read
+    - Descripción breve del modo seleccionado
+    - Persiste en ScriptReadingSession
+
+  Index status card:
+    - Icon tinteado (verde ✓ / naranja wand / rojo warning)
+    - Título + mensaje dinámico según estado
+    - Botón Build / Refresh (borderedProminent naranja)
+      o ProgressView si isParsing
+
+  Actions grid (LazyVGrid 2 columnas):
+    - Open Reader / Continue (naranja filled, muestra página)
+    - Annotate (azul)
+    - Practice (naranja, disabled + "Needs index" si no hay)
+    - Lyrics (morado, disabled + "Needs index" si no hay)
+    - NavigationLink directo a ReaderSplitView para los
+      dos primeros; Practice/Lyrics abren sheet/fullScreenCover
+
+  Coverage card:
+    - Single NavigationLink row con icon verde tinteado
+    - Chevron derecha, hoverEffect lift
+
+  Bookmarks card (solo si hay bookmarks):
+    - ReaderSidebarSectionHeader con contador
+    - Rows con icono bookmark.fill naranja
+    - Tap → NavigationLink a ReaderSplitView en esa página
+    - contextMenu long-press → Delete (haptic .rigid)
+    - Nota: se perdió swipe-to-delete al salir de List;
+      contextMenu es el reemplazo consciente
+
+  Polish reutilizado del módulo sidebar:
+    - ReaderSidebarSectionHeader (headers consistentes)
+    - PressableCardStyle (scale+opacity feedback)
+    - ReaderSidebarHaptic.fire(.light/.rigid)
+    - hoverEffect(.lift) en todas las cards tappables
+
+- Alert "Index Failed" con opción Retry preservado
+- Se eliminaron los antiguos progressSection / modeSection
+  / indexSection / actionsSection / bookmarksSection (Form)
+- Se eliminaron helpers huérfanos indexStatusLabel e indexStats
 
 -----------------------------------------------------------
 READER (ReaderSplitView + ReaderView)
@@ -148,11 +199,48 @@ Sidebar rediseñada (ScrollView + LazyVStack, cards editoriales):
     - PressableCardStyle: scale 0.97 + opacity 0.85 al presionar
       (easeOut 0.12s) aplicado a Quick Actions, Scenes,
       Bookmarks
+    - hoverEffect(.lift) en Quick Actions, Scenes, Bookmarks
+      (feedback trackpad/pencil hover en iPadOS)
     - Haptic .light en jump de escena, bookmark y personaje
     - Haptic .light en Quick Actions
     - Haptic .rigid al borrar bookmark
     - Título antiguo duplicado (navigationTitle del sidebar)
       eliminado — ahora vive solo en el header card
+
+  Estructura de archivos (Features/Reader/Sidebar/):
+    - ReaderSidebarShared.swift
+        PressableCardStyle (ButtonStyle)
+        ReaderSidebarSectionHeader (con overload EmptyView)
+        ReaderSidebarHaptic (enum con fire(style:))
+    - ReaderSidebarEmptyState.swift
+        ReaderSidebarEmptyState
+        ReaderSidebarInlineLoading (spinner + texto)
+    - ReaderSidebarWarningBanner.swift
+        ReaderSidebarWarningBanner(message:)
+    - ReaderSidebarHeaderCard.swift
+        Recibe: title, currentPageIndex, pageCount,
+                currentScene, parseResult, characterCount,
+                isParsing, indexedAt
+        Renderiza: título, current scene indicator,
+                   progress, stats chips, index status pill
+    - ReaderSidebarQuickActions.swift
+        Recibe: hasIndex, isParsing, 5 callbacks
+                (onPractice, onLyrics, onSearch,
+                 onAddBookmark, onBuildIndex)
+    - ReaderSidebarSceneSection.swift
+        Recibe: scenes, isParsing, hasParseResult,
+                currentSceneIndex, onJump
+    - ReaderSidebarBookmarkSection.swift
+        Recibe: bookmarks, onJump, onDelete
+    - ReaderSidebarCharacterSection.swift
+        Recibe: characters, dialogueTurnCounts,
+                hasParseResult, onJump, onInfo
+
+    ReaderSplitView sólo mantiene:
+      state, data logic (currentScene, showFormatWarning,
+      filteredCharacters, dialogueTurnCounts, bookmarks),
+      sidebarContent como orchestrator que inyecta
+      callbacks a los subcomponentes
 
 Detail (PDF):
   - Título inline (no large title)
@@ -247,9 +335,20 @@ SPEECH ENGINE (ScriptPracticeSessionController)
 - Haptic .soft en cada cambio de turno
 
 -----------------------------------------------------------
-GLOBAL SEARCH
+GLOBAL SEARCH — rediseñado card-based
 -----------------------------------------------------------
 
+- ScrollView + LazyVStack sobre systemGroupedBackground
+  (mismo lenguaje que Reader sidebar y ScriptDetailView)
+- Cada tipo agrupado en una sectionCard con
+  ReaderSidebarSectionHeader + contador de matches
+- Rows unificados dentro de la card:
+    - Ícono tinteado 28×28 con fondo color.opacity(0.12)
+    - Título (AttributedString con highlight naranja)
+    - Subtítulo: script name + página
+    - Badge capsule del tipo
+    - Divider sutil entre rows (leading 52, no sobre icono)
+- PressableCardStyle + hoverEffect(.lift) en cada NavigationLink
 - Busca en 5 tipos:
     Scripts  (título)           → badge azul
     Scenes   (heading)          → badge morado
@@ -257,23 +356,31 @@ GLOBAL SEARCH
     Notes    (texto/ancla)      → badge verde
     Bookmarks (etiqueta)        → badge naranja
 - Highlighting naranja de la query (AttributedString)
-- Row unificado: ícono color + título + subtítulo + badge
-- Subtítulo muestra script name + página
-- Empty state + no-results state
+- Empty state + no-results state sin listRowBackground
+  (ahora viven en LazyVStack, no List)
 - Usa ParseCacheService para buscar escenas y personajes
 
 -----------------------------------------------------------
-NOTES
+NOTES — rediseñado card-based (con swipe preservado)
 -----------------------------------------------------------
 
+- List(.plain) + scrollContentBackground(.hidden) sobre
+  systemGroupedBackground — preserva swipeActions nativos
+  mientras adopta el lenguaje visual de cards
+- Cada nota renderizada como card:
+    - Fondo secondarySystemGroupedBackground, radius 12
+    - Padding 14, hoverEffect(.lift)
+    - listRowBackground(.clear) + listRowSeparator(.hidden)
+- Header de grupo uniformado (caption uppercase +
+  badge con contador a la derecha)
+- Nombre del personaje resaltado en naranja cuando aplica
 - Agrupado: All / By Script / By Tag
-- Contador por sección en header
 - Tags: General, Blocking, Emotion, Motivation, Research,
         Callback, ToDo, Bravo
 - Tag filter en toolbar (ícono naranja cuando activo)
 - Search + filtro de tag combinados
 - Empty state con hint de uso
-- Swipe: Delete + Edit
+- Swipe: Delete + Edit (preservados porque seguimos en List)
 - NoteEditView: editar texto + cambiar tag
 - NavigationLink → ReaderSplitView (jump a página + turno)
 
@@ -293,6 +400,29 @@ COVERAGE
               personaje dominante, total roles)
     Recomendación inicial: Consider
     Todo offline, instantáneo, editable
+
+-----------------------------------------------------------
+SETTINGS — rediseñado card-based
+-----------------------------------------------------------
+
+SettingsView:
+  - ScrollView + LazyVStack sobre systemGroupedBackground
+  - Reader card (icono book.pages naranja + descripción)
+  - Lyrics Mode card con NavigationLink a LyricsSettingsView
+    (icono textformat.size morado + summary "Theme · Size",
+    PressableCardStyle + hoverEffect lift)
+  - Library card: Default experience / Supported file type
+    agrupados en una card con dividers internos
+  - About card: App name + version
+
+LyricsSettingsView:
+  - NavigationStack + ScrollView + LazyVStack
+    (se mantiene el stack para que funcione como sheet
+     desde LyricsPracticeView y como push desde Settings)
+  - Theme card: selector Dark / Read con preview cards
+  - Text Size card: slider A–A con nombre en header trailing
+  - Preview card: preview en vivo clipeado en RoundedRectangle
+  - Botón Done en topBarTrailing preservado
 
 -----------------------------------------------------------
 IMPORTACIÓN

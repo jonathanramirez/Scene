@@ -45,17 +45,19 @@ struct LibraryView: View {
         }
     }
 
+    @ViewBuilder
     private var libraryList: some View {
-        Group {
-            if docs.isEmpty {
-                emptyState
-            } else {
-                List {
-                    ForEach(docs) { doc in
-                        scriptRow(for: doc)
-                    }
+        if docs.isEmpty {
+            emptyState
+        } else {
+            List {
+                ForEach(docs) { doc in
+                    scriptRow(for: doc)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
         }
     }
 
@@ -92,6 +94,7 @@ struct LibraryView: View {
         }
         .padding(.horizontal, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
     }
 
     private func scriptRow(for document: ScriptDocument) -> some View {
@@ -99,7 +102,17 @@ struct LibraryView: View {
             ScriptDetailView(document: document)
         } label: {
             ScriptRowView(document: document)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+                .hoverEffect(.lift)
         }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
                 promptDelete(for: document)

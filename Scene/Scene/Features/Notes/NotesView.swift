@@ -23,6 +23,8 @@ struct NotesView: View {
             List {
                 if filteredNotes.isEmpty {
                     emptyState
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 } else {
                     switch grouping {
                     case .all:
@@ -36,6 +38,9 @@ struct NotesView: View {
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Notes")
             .searchable(text: $searchQuery, prompt: "Search notes")
             .toolbar {
@@ -67,15 +72,12 @@ struct NotesView: View {
         let sortedKeys = grouped.keys.sorted()
         ForEach(sortedKeys, id: \.self) { title in
             let sectionNotes = grouped[title] ?? []
-            Section(header: HStack {
-                Text(title)
-                Spacer()
-                Text("\(sectionNotes.count)")
-                    .font(.caption).foregroundStyle(.secondary)
-            }) {
+            Section {
                 ForEach(sectionNotes) { note in
                     noteListRow(for: note)
                 }
+            } header: {
+                groupHeader(title: title, count: sectionNotes.count)
             }
         }
     }
@@ -89,17 +91,28 @@ struct NotesView: View {
         let sortedKeys = order.filter { grouped[$0] != nil }
         ForEach(sortedKeys, id: \.self) { tagName in
             let sectionNotes = grouped[tagName] ?? []
-            Section(header: HStack {
-                Text(tagName)
-                Spacer()
-                Text("\(sectionNotes.count)")
-                    .font(.caption).foregroundStyle(.secondary)
-            }) {
+            Section {
                 ForEach(sectionNotes) { note in
                     noteListRow(for: note)
                 }
+            } header: {
+                groupHeader(title: tagName, count: sectionNotes.count)
             }
         }
+    }
+
+    private func groupHeader(title: String, count: Int) -> some View {
+        HStack {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Spacer()
+            Text("\(count)")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Note Row
@@ -122,6 +135,9 @@ struct NotesView: View {
                 noteRow(for: note, documentTitle: "Missing Script")
             }
         }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             Button(role: .destructive) {
                 context.delete(note)
@@ -140,7 +156,7 @@ struct NotesView: View {
 
     @ViewBuilder
     private func noteRow(for note: ScriptNote, documentTitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(documentTitle)
                     .font(.caption)
@@ -153,18 +169,23 @@ struct NotesView: View {
 
             if let name = note.anchoredCharacterName, !name.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(name).font(.headline)
+                    Text(name).font(.headline).foregroundStyle(.orange)
                     if let q = note.anchoredQualifier, !q.isEmpty {
                         Text(q).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
 
-            Text(note.text).font(.body).lineLimit(4)
+            Text(note.text)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .lineLimit(4)
 
             if let snippet = note.anchoredDialogueSnippet, !snippet.isEmpty {
                 Text("Cue: \(snippet)")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
 
             HStack(spacing: 8) {
@@ -173,9 +194,17 @@ struct NotesView: View {
                 Spacer()
                 Text(note.updatedAt.formatted(date: .abbreviated, time: .omitted))
             }
-            .font(.caption2).foregroundStyle(.tertiary)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 3)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .hoverEffect(.lift)
     }
 
     private func tagBadge(_ tag: NoteTag) -> some View {
@@ -240,7 +269,6 @@ struct NotesView: View {
             .font(.subheadline)
         }
         .frame(maxWidth: .infinity)
-        .listRowBackground(Color.clear)
         .padding(.vertical, 40)
     }
 

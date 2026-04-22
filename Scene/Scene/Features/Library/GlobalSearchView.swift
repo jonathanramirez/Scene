@@ -14,19 +14,26 @@ struct GlobalSearchView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if query.isEmpty {
-                    emptyPrompt
-                } else if hasNoResults {
-                    noResults
-                } else {
-                    scriptSection
-                    sceneSection
-                    characterSection
-                    noteSection
-                    bookmarkSection
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    if query.isEmpty {
+                        emptyPrompt
+                    } else if hasNoResults {
+                        noResults
+                    } else {
+                        scriptSection
+                        sceneSection
+                        characterSection
+                        noteSection
+                        bookmarkSection
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Search")
             .searchable(text: $query,
                         placement: .navigationBarDrawer(displayMode: .always),
@@ -39,8 +46,8 @@ struct GlobalSearchView: View {
     @ViewBuilder private var scriptSection: some View {
         let docs = matchingDocuments
         if !docs.isEmpty {
-            Section {
-                ForEach(docs) { doc in
+            sectionCard(title: "Scripts", count: docs.count) {
+                ForEach(Array(docs.enumerated()), id: \.element.id) { index, doc in
                     NavigationLink { ScriptDetailView(document: doc) } label: {
                         resultRow(
                             icon: "books.vertical.fill", iconColor: doc.iconColor.color,
@@ -48,17 +55,24 @@ struct GlobalSearchView: View {
                             subtitle: "\(doc.pageCount) pages · ~\(doc.estimatedMinutes) min",
                             badge: "Script", badgeColor: .blue
                         )
+                        .hoverEffect(.lift)
+                    }
+                    .buttonStyle(PressableCardStyle())
+
+                    if index < docs.count - 1 {
+                        Divider().padding(.leading, 52)
                     }
                 }
-            } header: { Text("Scripts") }
+            }
         }
     }
 
     @ViewBuilder private var sceneSection: some View {
         let items = matchingScenes
         if !items.isEmpty {
-            Section {
-                ForEach(items, id: \.0.id) { scene, doc in
+            sectionCard(title: "Scenes", count: items.count) {
+                ForEach(Array(items.enumerated()), id: \.element.0.id) { index, pair in
+                    let (scene, doc) = pair
                     if let doc {
                         NavigationLink {
                             ReaderSplitView(document: doc, initialJumpToPage: scene.startPage)
@@ -69,22 +83,28 @@ struct GlobalSearchView: View {
                                 subtitle: "\(doc.title) · p\(scene.startPage + 1)",
                                 badge: "Scene", badgeColor: .purple
                             )
+                            .hoverEffect(.lift)
+                        }
+                        .buttonStyle(PressableCardStyle())
+
+                        if index < items.count - 1 {
+                            Divider().padding(.leading, 52)
                         }
                     }
                 }
-            } header: { Text("Scenes") }
+            }
         }
     }
 
     @ViewBuilder private var characterSection: some View {
         let items = matchingCharacters
         if !items.isEmpty {
-            Section {
-                ForEach(items, id: \.0.id) { character, doc, turnCount in
+            sectionCard(title: "Characters", count: items.count) {
+                ForEach(Array(items.enumerated()), id: \.element.0.id) { index, triple in
+                    let (character, doc, turnCount) = triple
                     if let doc, let parseResult = loadedParseResult(doc) {
                         NavigationLink {
                             CharacterDetailView(character: character, parseResult: parseResult) { page in
-                                // Jump handled inside CharacterDetailView
                                 _ = page
                             }
                         } label: {
@@ -94,41 +114,57 @@ struct GlobalSearchView: View {
                                 subtitle: "\(doc.title) · \(turnCount) turns",
                                 badge: "Character", badgeColor: .orange
                             )
+                            .hoverEffect(.lift)
+                        }
+                        .buttonStyle(PressableCardStyle())
+
+                        if index < items.count - 1 {
+                            Divider().padding(.leading, 52)
                         }
                     }
                 }
-            } header: { Text("Characters") }
+            }
         }
     }
 
     @ViewBuilder private var noteSection: some View {
         let items = matchingNotes
         if !items.isEmpty {
-            Section {
-                ForEach(items, id: \.0.id) { note, doc in
-                    if let doc {
-                        NavigationLink {
-                            ReaderSplitView(
-                                document: doc,
-                                initialJumpToPage: note.pageIndex,
-                                initialPracticeTurnSequenceIndex: note.dialogueTurnSequenceIndex
-                            )
-                        } label: {
-                            noteRow(note, doc: doc)
+            sectionCard(title: "Notes", count: items.count) {
+                ForEach(Array(items.enumerated()), id: \.element.0.id) { index, pair in
+                    let (note, doc) = pair
+                    Group {
+                        if let doc {
+                            NavigationLink {
+                                ReaderSplitView(
+                                    document: doc,
+                                    initialJumpToPage: note.pageIndex,
+                                    initialPracticeTurnSequenceIndex: note.dialogueTurnSequenceIndex
+                                )
+                            } label: {
+                                noteRow(note, doc: doc)
+                                    .hoverEffect(.lift)
+                            }
+                            .buttonStyle(PressableCardStyle())
+                        } else {
+                            noteRow(note, doc: nil)
                         }
-                    } else {
-                        noteRow(note, doc: nil)
+                    }
+
+                    if index < items.count - 1 {
+                        Divider().padding(.leading, 52)
                     }
                 }
-            } header: { Text("Notes") }
+            }
         }
     }
 
     @ViewBuilder private var bookmarkSection: some View {
         let items = matchingBookmarks
         if !items.isEmpty {
-            Section {
-                ForEach(items, id: \.0.id) { bookmark, doc in
+            sectionCard(title: "Bookmarks", count: items.count) {
+                ForEach(Array(items.enumerated()), id: \.element.0.id) { index, pair in
+                    let (bookmark, doc) = pair
                     if let doc {
                         NavigationLink {
                             ReaderSplitView(document: doc, initialJumpToPage: bookmark.pageIndex)
@@ -139,10 +175,41 @@ struct GlobalSearchView: View {
                                 subtitle: "\(doc.title) · p\(bookmark.pageIndex + 1)",
                                 badge: "Bookmark", badgeColor: .orange
                             )
+                            .hoverEffect(.lift)
+                        }
+                        .buttonStyle(PressableCardStyle())
+
+                        if index < items.count - 1 {
+                            Divider().padding(.leading, 52)
                         }
                     }
                 }
-            } header: { Text("Bookmarks") }
+            }
+        }
+    }
+
+    // MARK: - Section container
+
+    @ViewBuilder
+    private func sectionCard<Content: View>(
+        title: String,
+        count: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ReaderSidebarSectionHeader(title) {
+                Text("\(count)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
         }
     }
 
@@ -167,6 +234,7 @@ struct GlobalSearchView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.subheadline)
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
                 HStack(spacing: 6) {
                     Text(subtitle)
@@ -178,7 +246,10 @@ struct GlobalSearchView: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private func noteRow(_ note: ScriptNote, doc: ScriptDocument?) -> some View {
@@ -199,6 +270,7 @@ struct GlobalSearchView: View {
                 }
                 Text(highlighted(note.text))
                     .font(.subheadline)
+                    .foregroundStyle(.primary)
                     .lineLimit(2)
                 HStack {
                     Text("\(doc?.title ?? "Unknown") · p\(note.pageIndex + 1)")
@@ -209,7 +281,10 @@ struct GlobalSearchView: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private func typeBadge(_ label: String, color: Color) -> some View {
@@ -314,7 +389,6 @@ struct GlobalSearchView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 48)
-        .listRowBackground(Color.clear)
     }
 
     private var noResults: some View {
@@ -326,6 +400,5 @@ struct GlobalSearchView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 48)
-        .listRowBackground(Color.clear)
     }
 }

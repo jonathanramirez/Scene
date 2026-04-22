@@ -89,7 +89,6 @@ struct ScriptRowView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color(.secondarySystemBackground))
-            .clipShape(Capsule())
+            .background(Color.primary.opacity(0.06), in: Capsule())
     }
 }

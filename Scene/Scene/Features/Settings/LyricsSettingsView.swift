@@ -8,25 +8,18 @@ struct LyricsSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Theme") {
-                    themePicker
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    themeCard
+                    fontSizeCard
+                    previewCard
                 }
-
-                Section {
-                    fontSizeControl
-                } header: {
-                    Text("Text Size")
-                } footer: {
-                    Text(fontSizeName)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Preview") {
-                    lyricsPreview
-                        .listRowInsets(EdgeInsets())
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Lyrics Appearance")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -34,6 +27,49 @@ struct LyricsSettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+
+    // MARK: - Cards
+
+    private var themeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Theme")
+
+            themePicker
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+        }
+    }
+
+    private var fontSizeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Text Size") {
+                Text(fontSizeName)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            fontSizeControl
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+        }
+    }
+
+    private var previewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Preview")
+
+            lyricsPreview
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
