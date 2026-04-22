@@ -62,7 +62,8 @@ LIBRARY — rediseñado card-based (con swipe preservado)
 - Swipe izquierdo → Edit Metadata
 - Swipe derecho → Delete (con confirmación)
 - Context menu: Edit Metadata / Delete Script
-- EditMetadataView: cambiar título + picker de 7 colores
+- EditMetadataView: sheet con cards (Title + Icon Color),
+  picker de 7 colores con hoverEffect y haptic .light al tap
 - Cascade delete completo al borrar:
     ScriptDrawing, ScriptNote, ScriptBookmark,
     ScriptReadingSession, ScriptCoverage,
@@ -381,18 +382,29 @@ NOTES — rediseñado card-based (con swipe preservado)
 - Search + filtro de tag combinados
 - Empty state con hint de uso
 - Swipe: Delete + Edit (preservados porque seguimos en List)
-- NoteEditView: editar texto + cambiar tag
+- NoteEditView: sheet card-based con Tag (chips horizontal),
+  Note (TextEditor sobre card) y Anchored to (cuando aplica,
+  con icono persona naranja + snippet del diálogo)
 - NavigationLink → ReaderSplitView (jump a página + turno)
 
 -----------------------------------------------------------
-COVERAGE
+COVERAGE — rediseñado card-based
 -----------------------------------------------------------
 
-- Formulario: Logline, Synopsis, Comments
-- Recomendación: Pass / Consider / Recommend (segmented)
+- ScrollView + LazyVStack sobre systemGroupedBackground
+- Cards:
+    Draft (solo si logline+synopsis vacíos):
+      - Icon + texto + botón "Generate Draft" naranja
+      - Deshabilitado con mensaje si no hay index
+    Recommendation: Picker segmented dentro de card
+    Logline / Synopsis / Comments:
+      - editorCard reutilizable con TextEditor
+        scrollContentBackground(.hidden) y fondo de card
+    Actions: LazyVGrid 2 columnas con Save / Share
+      (cards tinteadas, disabled state con opacidad)
 - Botón "Save" en toolbar (solo cuando hay cambios)
 - Botón "Share Coverage" → texto formateado
-- Botón "Generate Draft" (cuando logline/synopsis vacíos):
+- Generate Draft (cuando logline/synopsis vacíos):
     Requiere index del script
     Logline: primera escena + top 4 personajes + páginas
     Synopsis: outline escena por escena con páginas
