@@ -24,7 +24,16 @@ struct ScriptRowView: View {
     private var scriptIcon: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
-                .fill(document.iconColor.color)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            document.iconColor.color.opacity(0.92),
+                            document.iconColor.color.opacity(0.72)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
                 .frame(width: 48, height: 56)
 
             Image(systemName: "doc.text.fill")
@@ -42,31 +51,45 @@ struct ScriptRowView: View {
                 .font(.headline)
                 .lineLimit(2)
 
-            HStack(spacing: 6) {
-                Text("\(document.pageCount) pages · ~\(document.estimatedMinutes) min")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                metadataPill("\(document.pageCount) pages")
+                metadataPill("~\(document.estimatedMinutes) min")
 
                 Spacer()
 
                 if let session, session.progress > 0 {
-                    HStack(spacing: 4) {
-                        Text(session.mode == .firstRead ? "1st" : "2nd")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text("\(Int(session.progress * 100))%")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.orange)
-                    }
+                    Text("\(Int(session.progress * 100))%")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
                 }
             }
 
             if let session, session.progress > 0 {
-                ProgressView(value: session.progress)
-                    .tint(.orange)
-                    .scaleEffect(y: 0.7, anchor: .center)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(session.mode == .firstRead ? "First read" : "Second read")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Page \(session.lastPageIndex + 1)")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    ProgressView(value: session.progress)
+                        .tint(.orange)
+                        .scaleEffect(y: 0.7, anchor: .center)
+                }
             }
         }
+    }
+
+    private func metadataPill(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(Capsule())
     }
 }

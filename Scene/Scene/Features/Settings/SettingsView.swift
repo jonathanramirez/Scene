@@ -8,7 +8,14 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Reader") {
-                    Toggle("First Read hints", isOn: .constant(true))
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Reader defaults")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Scene keeps the reading experience intentionally minimal. Practice tools and annotations stay contextual so the script remains the focus.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 }
 
                 Section("Lyrics Mode") {
@@ -25,6 +32,11 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Library") {
+                    LabeledContent("Default experience", value: "Reader + Practice")
+                    LabeledContent("Supported file type", value: "PDF screenplay")
+                }
+
                 Section("About") {
                     LabeledContent("App", value: "Scene")
                     LabeledContent("Version", value: "0.1")
@@ -35,7 +47,7 @@ struct SettingsView: View {
     }
 
     private var lyricsSummary: String {
-        let theme = lyricsIsDarkMode ? "Dark" : "Read"
+        let theme = lyricsIsDarkMode ? "Dark" : "Light"
         let size: String
         switch lyricsFontSizeStep {
         case -2: size = "XS"

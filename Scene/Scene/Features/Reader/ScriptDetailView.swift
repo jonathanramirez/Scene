@@ -40,18 +40,29 @@ struct ScriptDetailView: View {
     }
 
     var body: some View {
-        Form {
-            headerSection
-            progressSection
-            modeSection
-            actionsSection
-
-            if !bookmarks.isEmpty {
-                bookmarksSection
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                heroCard
+                if pdfIsMissing {
+                    missingPDFBanner
+                }
+                progressCard
+                readingModeCard
+                indexStatusCard
+                actionsGrid
+                coverageCard
+                if !bookmarks.isEmpty {
+                    bookmarksCard
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(document.title)
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadThumbnail()
             if let session { selectedMode = session.mode }
@@ -81,35 +92,435 @@ struct ScriptDetailView: View {
         }
     }
 
-    // MARK: - Sections
+    // MARK: - Hero
 
-    private var headerSection: some View {
-        Section {
-            HStack(alignment: .top, spacing: 16) {
-                thumbnailView
-                    .frame(width: 80, height: 110)
+    private var heroCard: some View {
+        HStack(alignment: .top, spacing: 16) {
+            thumbnailView
+                .frame(width: 88, height: 120)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(document.title)
-                        .font(.headline)
-                        .lineLimit(3)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(document.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(3)
+                    .foregroundStyle(.primary)
 
-                    Label("\(document.pageCount) pages", systemImage: "doc.text")
+                HStack(spacing: 6) {
+                    metaChip(icon: "doc.text", text: "\(document.pageCount) pages")
+                    metaChip(icon: "clock", text: "~\(document.estimatedMinutes) min")
+                }
+
+                Text(document.createdAt.formatted(date: .abbreviated, time: .omitted))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+    }
+
+    private func metaChip(icon: String, text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.caption2)
+            Text(text).font(.caption)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.primary.opacity(0.06), in: Capsule())
+    }
+
+    // MARK: - Missing PDF banner
+
+    private var pdfIsMissing: Bool {
+        document.resolvedFileURL.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
+    }
+
+    private var missingPDFBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .font(.subheadline)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("PDF not found")
+                    .font(.subheadline.weight(.semibold))
+                Text(AppError.fileMissing.localizedDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.red.opacity(0.10))
+        )
+    }
+
+    // MARK: - Progress
+
+    private var progressCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Reading Progress")
+                .foregroundStyle(.primary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                if let session, session.progress > 0 {
+                    ProgressView(value: session.progress).tint(.orange)
+                    HStack {
+                        Text("Page \(session.lastPageIndex + 1) of \(document.pageCount)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Int(session.progress * 100))%")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                    HStack(spacing: 8) {
+                        statPill("\(selectedMode == .firstRead ? "1st" : "2nd") read", color: .blue)
+                        statPill("~\(remainingMinutes) min left", color: .orange)
+                    }
+                } else {
+                    Text("Not started yet")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-
-                    Label("~\(document.estimatedMinutes) min", systemImage: "clock")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Text(document.createdAt.formatted(date: .abbreviated, time: .omitted))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-
-                    indexStatusLabel
+                    HStack(spacing: 8) {
+                        statPill("\(document.pageCount) pages", color: .blue)
+                        statPill("~\(document.estimatedMinutes) min", color: .orange)
+                    }
                 }
             }
-            .padding(.vertical, 6)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    // MARK: - Reading Mode
+
+    private var readingModeCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Reading Mode")
+
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Reading Mode", selection: $selectedMode) {
+                    Text("First Read").tag(ReadingMode.firstRead)
+                    Text("Second Read").tag(ReadingMode.secondRead)
+                }
+                .pickerStyle(.segmented)
+
+                Text(selectedMode == .firstRead
+                    ? "Focus on story flow and characters. Minimal interruptions."
+                    : "Analyze structure, dialogue, and themes. Take deeper notes."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    // MARK: - Index
+
+    private var indexStatusCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Index")
+
+            HStack(spacing: 12) {
+                Image(systemName: indexStatusIconName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(indexStatusColor)
+                    .frame(width: 36, height: 36)
+                    .background(indexStatusColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(indexStatusTitle)
+                        .font(.subheadline.weight(.semibold))
+                    Text(indexStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                if isParsing {
+                    ProgressView().scaleEffect(0.85)
+                } else {
+                    Button(indexedAt == nil ? "Build" : "Refresh") {
+                        ReaderSidebarHaptic.fire(.light)
+                        Task { await buildIndex(force: true) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.small)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    // MARK: - Actions grid
+
+    private var actionsGrid: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Open")
+
+            LazyVGrid(
+                columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+                spacing: 10
+            ) {
+                openReaderCard
+                annotateCard
+                practiceCard
+                lyricsCard
+            }
+        }
+    }
+
+    private var openReaderCard: some View {
+        let hasProgress = (session?.progress ?? 0) > 0
+        return NavigationLink {
+            ReaderSplitView(document: document, initialJumpToPage: initialJumpPage)
+        } label: {
+            actionCardContent(
+                icon: hasProgress ? "book.fill" : "book",
+                label: hasProgress ? "Continue" : "Open Reader",
+                sublabel: hasProgress ? "Page \((session?.lastPageIndex ?? 0) + 1)" : nil,
+                tint: .orange,
+                filled: true
+            )
+            .hoverEffect(.lift)
+        }
+        .buttonStyle(PressableCardStyle())
+    }
+
+    private var annotateCard: some View {
+        NavigationLink {
+            ReaderSplitView(document: document, initialJumpToPage: nil)
+        } label: {
+            actionCardContent(
+                icon: "pencil.and.list.clipboard",
+                label: "Annotate",
+                sublabel: nil,
+                tint: .blue,
+                filled: false
+            )
+            .hoverEffect(.lift)
+        }
+        .buttonStyle(PressableCardStyle())
+    }
+
+    @ViewBuilder
+    private var practiceCard: some View {
+        let enabled = (parseResult?.dialogueTurns.isEmpty == false)
+        Button {
+            ReaderSidebarHaptic.fire(.light)
+            isShowingPractice = true
+        } label: {
+            actionCardContent(
+                icon: "mic.fill",
+                label: "Practice",
+                sublabel: enabled ? practiceSublabel : "Needs index",
+                tint: .orange,
+                filled: false,
+                disabled: !enabled
+            )
+            .hoverEffect(.lift)
+        }
+        .buttonStyle(PressableCardStyle())
+        .disabled(!enabled)
+    }
+
+    @ViewBuilder
+    private var lyricsCard: some View {
+        let enabled = (parseResult?.dialogueTurns.isEmpty == false)
+        Button {
+            ReaderSidebarHaptic.fire(.light)
+            isShowingLyrics = true
+        } label: {
+            actionCardContent(
+                icon: "text.alignleft",
+                label: "Lyrics",
+                sublabel: enabled ? nil : "Needs index",
+                tint: .purple,
+                filled: false,
+                disabled: !enabled
+            )
+            .hoverEffect(.lift)
+        }
+        .buttonStyle(PressableCardStyle())
+        .disabled(!enabled)
+    }
+
+    private var practiceSublabel: String? {
+        guard let pr = parseResult else { return nil }
+        return "\(pr.dialogueTurns.count) turns"
+    }
+
+    private func actionCardContent(
+        icon: String,
+        label: String,
+        sublabel: String?,
+        tint: Color,
+        filled: Bool,
+        disabled: Bool = false
+    ) -> some View {
+        let fg = disabled ? Color.secondary : tint
+        let bg = disabled
+            ? Color(.secondarySystemGroupedBackground)
+            : (filled ? tint.opacity(0.18) : tint.opacity(0.10))
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(fg)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(disabled ? .secondary : .primary)
+                if let sublabel {
+                    Text(sublabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(bg)
+        )
+        .opacity(disabled ? 0.7 : 1.0)
+    }
+
+    // MARK: - Coverage
+
+    private var coverageCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Analysis")
+
+            NavigationLink {
+                CoverageView(document: document)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.title3)
+                        .foregroundStyle(.green)
+                        .frame(width: 36, height: 36)
+                        .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Coverage")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text("Logline, synopsis, recommendation")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+                .hoverEffect(.lift)
+            }
+            .buttonStyle(PressableCardStyle())
+        }
+    }
+
+    // MARK: - Bookmarks
+
+    private var bookmarksCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Bookmarks") {
+                Text("\(bookmarks.count)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 6) {
+                ForEach(bookmarks) { bookmark in
+                    bookmarkRow(bookmark)
+                }
+            }
+        }
+    }
+
+    private func bookmarkRow(_ bookmark: ScriptBookmark) -> some View {
+        NavigationLink {
+            ReaderSplitView(document: document, initialJumpToPage: bookmark.pageIndex)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "bookmark.fill")
+                    .foregroundStyle(.orange)
+                    .font(.subheadline)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(bookmark.label ?? "Page \(bookmark.pageIndex + 1)")
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    if bookmark.label != nil {
+                        Text("Page \(bookmark.pageIndex + 1)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+            .hoverEffect(.lift)
+        }
+        .buttonStyle(PressableCardStyle())
+        .contextMenu {
+            Button(role: .destructive) {
+                ReaderSidebarHaptic.fire(.rigid)
+                context.delete(bookmark)
+                try? context.save()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
@@ -129,159 +540,6 @@ struct ScriptDetailView: View {
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
                 }
-        }
-    }
-
-    private var progressSection: some View {
-        Section("Reading Progress") {
-            if let session, session.progress > 0 {
-                VStack(alignment: .leading, spacing: 8) {
-                    ProgressView(value: session.progress)
-                        .tint(.orange)
-
-                    HStack {
-                        Text("Page \(session.lastPageIndex + 1) of \(document.pageCount)")
-                        Spacer()
-                        Text("\(Int(session.progress * 100))% read")
-                            .foregroundStyle(.orange)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            } else {
-                Text("Not started yet")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var modeSection: some View {
-        Section {
-            Picker("Reading Mode", selection: $selectedMode) {
-                Text("First Read").tag(ReadingMode.firstRead)
-                Text("Second Read").tag(ReadingMode.secondRead)
-            }
-            .pickerStyle(.segmented)
-            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-
-            Text(selectedMode == .firstRead
-                ? "Focus on story flow and characters. Minimal interruptions."
-                : "Analyze structure, dialogue, and themes. Take deeper notes."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        } header: {
-            Text("Reading Mode")
-        }
-    }
-
-    private var actionsSection: some View {
-        Section {
-            // PDF missing warning
-            if document.resolvedFileURL.map({ !FileManager.default.fileExists(atPath: $0.path) }) ?? true {
-                Label(AppError.fileMissing.localizedDescription, systemImage: "exclamationmark.triangle.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(.red)
-            }
-
-            // Reading
-            NavigationLink {
-                ReaderSplitView(document: document, initialJumpToPage: initialJumpPage)
-            } label: {
-                Label(
-                    (session?.progress ?? 0) > 0 ? "Continue Reading" : "Open Reader",
-                    systemImage: (session?.progress ?? 0) > 0 ? "book.fill" : "book"
-                )
-                .foregroundStyle(.orange)
-            }
-
-            // Practice / Lyrics
-            if isParsing {
-                HStack {
-                    Label("Indexing…", systemImage: "gearshape")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    ProgressView().scaleEffect(0.8)
-                }
-            } else if let parseError {
-                HStack {
-                    Label("Index failed", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.red)
-                    Spacer()
-                    Button("Retry") { Task { await buildIndex(force: true) } }
-                        .font(.subheadline)
-                        .foregroundStyle(.orange)
-                }
-                Text(parseError)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if let parseResult, !parseResult.dialogueTurns.isEmpty {
-                Button { isShowingPractice = true } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label("Practice", systemImage: "mic")
-                        Text(indexStats(parseResult)).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                Button { isShowingLyrics = true } label: {
-                    Label("Lyrics Mode", systemImage: "text.alignleft")
-                }
-            } else if parseResult == nil {
-                Button { Task { await buildIndex() } } label: {
-                    Label("Build Index for Practice", systemImage: "wand.and.stars")
-                }
-                .foregroundStyle(.secondary)
-            } else {
-                Label("No dialogue detected in this PDF", systemImage: "mic.slash")
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
-            }
-
-            // Annotate
-            NavigationLink {
-                ReaderSplitView(document: document, initialJumpToPage: nil)
-            } label: {
-                Label("Annotate & Draw", systemImage: "pencil.and.list.clipboard")
-            }
-
-            // Coverage
-            NavigationLink {
-                CoverageView(document: document)
-            } label: {
-                Label("Coverage", systemImage: "doc.text.magnifyingglass")
-            }
-        } header: {
-            Text("Actions")
-        }
-    }
-
-    private var bookmarksSection: some View {
-        Section("Bookmarks (\(bookmarks.count))") {
-            ForEach(bookmarks) { bookmark in
-                NavigationLink {
-                    ReaderSplitView(document: document, initialJumpToPage: bookmark.pageIndex)
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "bookmark.fill")
-                            .foregroundStyle(.orange)
-                            .frame(width: 16)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(bookmark.label ?? "Page \(bookmark.pageIndex + 1)")
-                                .font(.subheadline)
-                            if bookmark.label != nil {
-                                Text("Page \(bookmark.pageIndex + 1)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-            .onDelete { offsets in
-                for i in offsets { context.delete(bookmarks[i]) }
-                try? context.save()
-            }
         }
     }
 
@@ -344,27 +602,64 @@ struct ScriptDetailView: View {
 
     // MARK: - Index helpers
 
-    @ViewBuilder
-    private var indexStatusLabel: some View {
-        if isParsing {
-            Label("Indexing…", systemImage: "gearshape")
-                .font(.caption2)
-                .foregroundStyle(.orange)
-        } else if let at = indexedAt {
-            Label("Indexed \(at.formatted(.relative(presentation: .named)))", systemImage: "checkmark.circle")
-                .font(.caption2)
-                .foregroundStyle(.green)
-        } else {
-            Label("Not indexed", systemImage: "circle.dashed")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
+    private func statPill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(color.opacity(0.12))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
     }
 
-    private func indexStats(_ result: ScriptParseResult) -> String {
-        let scenes = result.scenes.count
-        let chars  = result.characters.count
-        let turns  = result.dialogueTurns.count
-        return "\(turns) turns · \(chars) characters · \(scenes) scenes"
+    private var remainingMinutes: Int {
+        let progress = session?.progress ?? 0
+        return max(Int(Double(document.estimatedMinutes) * (1 - progress)), 0)
+    }
+
+    private var indexStatusTitle: String {
+        if isParsing {
+            return "Indexing script"
+        }
+        if parseError != nil {
+            return "Index unavailable"
+        }
+        if indexedAt != nil {
+            return "Index ready"
+        }
+        return "Build practice index"
+    }
+
+    private var indexStatusMessage: String {
+        if isParsing {
+            return "Detecting scenes, characters, and dialogue turns."
+        }
+        if let parseError {
+            return parseError
+        }
+        if let at = indexedAt {
+            return "Updated \(at.formatted(.relative(presentation: .named)))."
+        }
+        return "Needed for Practice, Lyrics Mode, and faster navigation."
+    }
+
+    private var indexStatusIconName: String {
+        if isParsing {
+            return "gearshape"
+        }
+        if parseError != nil {
+            return "exclamationmark.triangle.fill"
+        }
+        return indexedAt != nil ? "checkmark.circle.fill" : "wand.and.stars"
+    }
+
+    private var indexStatusColor: Color {
+        if isParsing {
+            return .orange
+        }
+        if parseError != nil {
+            return .red
+        }
+        return indexedAt != nil ? .green : .secondary
     }
 }

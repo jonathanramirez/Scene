@@ -1,0 +1,345 @@
+===========================================================
+SCENE — LO QUE ESTÁ IMPLEMENTADO (abril 2026)
+===========================================================
+
+-----------------------------------------------------------
+ARQUITECTURA GENERAL
+-----------------------------------------------------------
+
+- SwiftData como base de datos local (sin Core Data)
+- @Observable + ScriptSessionStore: estado por documento
+  compartido entre Reader, Practice y Lyrics sin pérdida
+  de contexto al cambiar de modo
+- resolvedFileURL: reconstruye la ruta del PDF desde
+  originalFileName cada vez (fix sandbox UUID en iOS)
+- ParseCacheService: JSON de ScriptParseResult en SwiftData
+  con version gate (parserVersion = "1.1")
+- ThumbnailCacheService: JPEG a disco en <Caches>/Thumbnails/
+- ScriptSessionState: in-memory por documento (efímero,
+  no persiste entre lanzamientos — diseño intencional)
+
+-----------------------------------------------------------
+MODELOS (SwiftData)
+-----------------------------------------------------------
+
+ScriptDocument        título, pageCount, iconColor, createdAt
+ScriptDrawing         anotaciones PencilKit por página
+ScriptNote            notas libres con tag, ancla personaje/turno
+ScriptBookmark        marcadores por página con etiqueta opcional
+ScriptReadingSession  progreso, modo (firstRead / secondRead)
+ScriptCoverage        logline, synopsis, recomendación
+ScriptParseCache      resultado parse en JSON, versión, fecha
+ScriptTag             tags de usuario
+NoteTag               enum: General, Blocking, Emotion,
+                      Motivation, Research, Callback, ToDo, Bravo
+ScriptIconColor       enum: red, orange, yellow, green,
+                      blue, purple, gray
+
+-----------------------------------------------------------
+NAVEGACIÓN
+-----------------------------------------------------------
+
+4 tabs: Library / Notes / Search / Settings
+  Library  → ScriptDetailView (hub) → ReaderSplitView
+  Notes    → NotesView (All / By Script / By Tag)
+  Search   → GlobalSearchView
+  Settings → SettingsView
+
+-----------------------------------------------------------
+LIBRARY
+-----------------------------------------------------------
+
+- Lista de scripts con ScriptRowView
+    - Ícono coloreado (48×56 rounded rect, sombra)
+    - Usa document.iconColor.color
+- Empty state con botón "Import PDF"
+- Swipe izquierdo → Edit Metadata
+- Swipe derecho → Delete (con confirmación)
+- Context menu: Edit Metadata / Delete Script
+- EditMetadataView: cambiar título + picker de 7 colores
+- Cascade delete completo al borrar:
+    ScriptDrawing, ScriptNote, ScriptBookmark,
+    ScriptReadingSession, ScriptCoverage,
+    ScriptParseCache (SwiftData),
+    Thumbnail (disco), PDF (disco)
+
+-----------------------------------------------------------
+SCRIPT DETAIL (hub)
+-----------------------------------------------------------
+
+- Thumbnail del PDF (cacheado en disco, instantáneo)
+- pageCount, estimatedMinutes, fecha de creación
+- Estado del index: Not indexed / Indexing… / ✓ Indexed X ago
+- Progreso de lectura: ProgressView + página actual
+- Reading Mode: First Read / Second Read (persiste en SwiftData)
+- Acciones:
+    Open Reader / Continue Reading (jump a última página)
+    Practice (requiere index con diálogo)
+    Lyrics Mode
+    Annotate & Draw
+    Coverage
+- Warning visible si el PDF no existe en disco
+- Alert "Index Failed" con opción Retry
+- Sección de Bookmarks con swipe-to-delete
+- indexStats: "18 turns · 4 characters · 3 scenes"
+
+-----------------------------------------------------------
+READER (ReaderSplitView + ReaderView)
+-----------------------------------------------------------
+
+Chrome inmersivo:
+  - TabView oculto dentro del lector (toolbar hidden .tabBar)
+  - Nav bar exterior del NavigationStack oculto
+  - Back button custom (chevron.left) vive en el toolbar
+    del detalle → todo en una sola fila
+  - NavigationSplitView arranca en .detailOnly
+    (sidebar colapsado por defecto, se abre con el toggle
+    nativo del toolbar)
+
+Sidebar rediseñada (ScrollView + LazyVStack, cards editoriales):
+
+  Header card (secondarySystemGroupedBackground, radius 16):
+    - Título del documento (title3 semibold)
+    - Indicador de escena actual: "Scene #N · HEADING"
+      calculado desde currentPageIndex, se actualiza en vivo
+    - ProgressView naranja + "Page X of Y · N%"
+    - Chips de stats: turns / chars / scenes
+    - Pill de estado de index:
+        Indexing… (naranja) / Indexed X ago (verde) /
+        Not indexed (secondary)
+
+  Quick Actions (grid 2 columnas, tarjetas tintadas):
+    - Practice (naranja, mic.fill)
+    - Lyrics (morado, text.alignleft)
+    - Search (azul, magnifyingglass)
+    - Bookmark (naranja, bookmark)
+    - Si no hay index: card primaria full-width
+      "Build Index — Unlocks Practice, Lyrics & Search"
+    - Si está parseando: card con spinner "Indexing script…"
+
+  Scenes:
+    - Rows como cards redondeadas con badge #N (capsule)
+    - Heading + "Page N" secundario
+    - Escena actual resaltada:
+        fondo naranja opacity 0.10
+        franja lateral de 3pt naranja
+        badge invertido (fondo naranja, texto blanco)
+    - Transición animada (easeInOut 0.25s) al cambiar
+      de escena mientras se lee
+    - Empty state compacto si no hay escenas
+
+  Bookmarks (movido encima de Characters):
+    - Cards con icono naranja, label + página
+    - Delete vía contextMenu (long-press) con haptic
+    - Se oculta la sección completa si está vacía
+
+  Characters (movido debajo, compacto):
+    - Rows densos agrupados en una única card
+    - Nombre + chip con turn count + info button discreto
+    - Tap row = jump a primera página del personaje
+    - Info button = abre CharacterDetailView
+
+  Warning banner:
+    - Se muestra como bloque naranja al final si el PDF
+      no parece seguir formato estándar de guion
+    - Ya NO aparece como fila perdida dentro de la lista
+
+  Polish:
+    - PressableCardStyle: scale 0.97 + opacity 0.85 al presionar
+      (easeOut 0.12s) aplicado a Quick Actions, Scenes,
+      Bookmarks
+    - Haptic .light en jump de escena, bookmark y personaje
+    - Haptic .light en Quick Actions
+    - Haptic .rigid al borrar bookmark
+    - Título antiguo duplicado (navigationTitle del sidebar)
+      eliminado — ahora vive solo en el header card
+
+Detail (PDF):
+  - Título inline (no large title)
+  - Toolbar izquierdo:
+      ← Back custom (chevron.left) usando @Environment(\.dismiss)
+      ✏️ Annotate toggle (naranja al activar)
+      Al anotar: selector tool (pen/highlighter/eraser)
+                 selector color (menú)
+                 botón trash (clear page)
+  - Toolbar izquierdo: Share (export PDF anotado)
+  - Toolbar izquierdo: Pencil-only toggle
+  - Toolbar derecho: Bookmark (haptic al guardar)
+  - Toolbar derecho: 🎭 Rehearse menu
+      › Practice Mode
+      › Lyrics Mode
+      › Search Script
+  - Toolbar derecho: Index status
+      ✓ verde (indexado) / wand (sin index) → menú Reindex
+  - PDF missing → ContentUnavailableView "PDF Not Found"
+  - Export fail → Alert con mensaje de error
+
+-----------------------------------------------------------
+SCENE DETAIL
+-----------------------------------------------------------
+
+- Heading, rango de páginas, número de turnos en la escena
+- Personajes en la escena con conteo de turnos
+- Lista completa de diálogo de la escena
+- Botón "Jump to Scene" en toolbar
+
+-----------------------------------------------------------
+CHARACTER DETAIL
+-----------------------------------------------------------
+
+- Stats: total de turnos, primera página, word count estimado
+- Lista searchable de todos los diálogos del personaje
+- Tap en turno → jump a página
+
+-----------------------------------------------------------
+SCRIPT SEARCH (in-reader)
+-----------------------------------------------------------
+
+- Busca diálogos por personaje / texto / parenthetical
+- Highlighting naranja en la query
+- Tap → jump a página + dismiss automático
+
+-----------------------------------------------------------
+PRACTICE (PracticeSessionView)
+-----------------------------------------------------------
+
+- Picker de personaje con conteo de turnos y páginas
+- Picker de escena (filtrado por personaje si se activa)
+- Sección Playback:
+    Pausa para tu línea (Stepper 1–12s)
+    Pausa entre turnos (Stepper 0–4s)
+    Slider de velocidad (Slow / Normal / Fast / Very fast)
+    Toggle "Read my lines too"
+    Toggle "Hide my lines (memory mode)"
+    Warning si TTS no está disponible
+- Cue card del turno activo + preview de 8 turnos
+- Reveal Line → haptic suave
+- Cambio de turno → haptic suave
+- Quick Note con tag picker (ancla al turno activo)
+- Botón Lyrics → preserva personaje/turno/modo en sesión
+- Sincronizado con ScriptSessionStore
+
+-----------------------------------------------------------
+LYRICS MODE (LyricsPracticeView)
+-----------------------------------------------------------
+
+- Setup: mismas opciones que Practice + slider de velocidad
+- Warning si TTS no disponible
+- Stage: scroll automático (estilo Apple Music)
+- Tap en turno → salta a ese punto en la reproducción
+- Botón mic → abre Practice (preserva contexto completo)
+- Appearance settings: dark/light, font size (AppStorage)
+- Sincronizado con ScriptSessionStore
+
+-----------------------------------------------------------
+SPEECH ENGINE (ScriptPracticeSessionController)
+-----------------------------------------------------------
+
+- AVSpeechSynthesizer con continuations async/await
+- speechRate configurable por el usuario (slider 0.0–1.0)
+  clampeado al rango AVFoundation válido
+- Líneas "continued": rate * 1.04
+- pitchMultiplier diferente: propia (1.08), otros (0.92), V.O. (0.86)
+- Pausa configurable entre turnos
+- Ventana de respuesta configurable para líneas propias
+- Audio session: .playback / .spokenAudio / .duckOthers
+- ttsUnavailable: detecta ausencia de voces y muestra warning
+- Haptic .soft en cada cambio de turno
+
+-----------------------------------------------------------
+GLOBAL SEARCH
+-----------------------------------------------------------
+
+- Busca en 5 tipos:
+    Scripts  (título)           → badge azul
+    Scenes   (heading)          → badge morado
+    Characters (nombre)         → badge naranja
+    Notes    (texto/ancla)      → badge verde
+    Bookmarks (etiqueta)        → badge naranja
+- Highlighting naranja de la query (AttributedString)
+- Row unificado: ícono color + título + subtítulo + badge
+- Subtítulo muestra script name + página
+- Empty state + no-results state
+- Usa ParseCacheService para buscar escenas y personajes
+
+-----------------------------------------------------------
+NOTES
+-----------------------------------------------------------
+
+- Agrupado: All / By Script / By Tag
+- Contador por sección en header
+- Tags: General, Blocking, Emotion, Motivation, Research,
+        Callback, ToDo, Bravo
+- Tag filter en toolbar (ícono naranja cuando activo)
+- Search + filtro de tag combinados
+- Empty state con hint de uso
+- Swipe: Delete + Edit
+- NoteEditView: editar texto + cambiar tag
+- NavigationLink → ReaderSplitView (jump a página + turno)
+
+-----------------------------------------------------------
+COVERAGE
+-----------------------------------------------------------
+
+- Formulario: Logline, Synopsis, Comments
+- Recomendación: Pass / Consider / Recommend (segmented)
+- Botón "Save" en toolbar (solo cuando hay cambios)
+- Botón "Share Coverage" → texto formateado
+- Botón "Generate Draft" (cuando logline/synopsis vacíos):
+    Requiere index del script
+    Logline: primera escena + top 4 personajes + páginas
+    Synopsis: outline escena por escena con páginas
+    Comments: stats (páginas, escenas, turnos,
+              personaje dominante, total roles)
+    Recomendación inicial: Consider
+    Todo offline, instantáneo, editable
+
+-----------------------------------------------------------
+IMPORTACIÓN
+-----------------------------------------------------------
+
+ScriptImportService:
+  - FileImporter: .pdf
+  - Copia PDF a <Documents>/Scripts/<originalFileName>
+  - Crea ScriptDocument en SwiftData
+
+-----------------------------------------------------------
+EXPORT
+-----------------------------------------------------------
+
+PDFExportService:
+  - Renderiza anotaciones PencilKit sobre el PDF original
+  - Genera PDF temporal para compartir via UIActivityViewController
+  - Error → alert visible al usuario con mensaje
+
+-----------------------------------------------------------
+ERROR STATES
+-----------------------------------------------------------
+
+PDF missing        → Warning en ScriptDetailView
+                     ContentUnavailableView en ReaderSplitView
+Parse failed       → Alert con Retry en ScriptDetailView
+Export failed      → Alert en ReaderView
+Delete failed      → Alert en LibraryView
+TTS unavailable    → Banner en Practice y Lyrics
+
+-----------------------------------------------------------
+RENDIMIENTO
+-----------------------------------------------------------
+
+- Thumbnail: JPEG 85% en disco, load instantáneo al reabrir
+- Parse cache: JSON en SwiftData, skip si versión coincide
+- resolvedFileURL: reconstruye path desde documentDirectory
+- ScriptSessionStore: in-memory por diseño (no persiste)
+- ThumbnailCacheService.evict(): limpieza al borrar script
+- ParseCacheService.invalidate(): limpieza al borrar script
+
+-----------------------------------------------------------
+GIT
+-----------------------------------------------------------
+
+- Todo mergeado en main (commit bb780d4 → merge en main)
+- Rama claude/jolly-cartwright-d264bd: eliminada
+- Worktree: eliminado
+
+===========================================================
