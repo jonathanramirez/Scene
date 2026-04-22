@@ -31,7 +31,7 @@ struct ReaderView: View {
         }
         .toolbar {
             // Single orange toggle — PKToolPicker floats natively when active
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isAnnotating.toggle()
                 } label: {

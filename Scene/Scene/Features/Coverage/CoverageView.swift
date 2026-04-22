@@ -21,82 +21,28 @@ struct CoverageView: View {
     @State private var shareText: String?
     @State private var isGenerating = false
 
+    private var hasIndex: Bool {
+        ParseCacheService.load(documentId: document.id, context: context) != nil
+    }
+
     var body: some View {
-        Form {
-            // Auto-generate banner
-            if logline.isEmpty && synopsis.isEmpty {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Generate a draft coverage from the indexed script data.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Button {
-                            generateDraft()
-                        } label: {
-                            if isGenerating {
-                                Label("Generating…", systemImage: "wand.and.stars")
-                            } else {
-                                Label("Generate Draft", systemImage: "wand.and.stars")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                        .disabled(isGenerating || ParseCacheService.load(documentId: document.id, context: context) == nil)
-
-                        if ParseCacheService.load(documentId: document.id, context: context) == nil {
-                            Text("Index this script first to enable auto-generate.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if logline.isEmpty && synopsis.isEmpty {
+                    generateDraftCard
                 }
+                recommendationCard
+                loglineCard
+                synopsisCard
+                commentsCard
+                actionsCard
             }
-
-            Section("Recommendation") {
-                Picker("Recommendation", selection: $recommendation) {
-                    ForEach(ScriptCoverage.Recommendation.allCases) { rec in
-                        Text(rec.rawValue).tag(rec)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: recommendation) { _, _ in isDirty = true }
-            }
-
-            Section("Logline") {
-                TextEditor(text: $logline)
-                    .frame(minHeight: 80)
-                    .onChange(of: logline) { _, _ in isDirty = true }
-            }
-
-            Section("Synopsis") {
-                TextEditor(text: $synopsis)
-                    .frame(minHeight: 120)
-                    .onChange(of: synopsis) { _, _ in isDirty = true }
-            }
-
-            Section("Comments") {
-                TextEditor(text: $comments)
-                    .frame(minHeight: 120)
-                    .onChange(of: comments) { _, _ in isDirty = true }
-            }
-
-            Section {
-                Button {
-                    saveCoverage()
-                } label: {
-                    Label("Save Coverage", systemImage: "square.and.arrow.down")
-                }
-                .disabled(!isDirty)
-
-                Button {
-                    shareText = formatCoverageText()
-                } label: {
-                    Label("Share Coverage", systemImage: "square.and.arrow.up")
-                }
-                .disabled(logline.isEmpty && synopsis.isEmpty && comments.isEmpty)
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Coverage")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -115,6 +61,168 @@ struct CoverageView: View {
             }
         }
     }
+
+    // MARK: - Cards
+
+    private var generateDraftCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Draft")
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                        .frame(width: 36, height: 36)
+                        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Generate a draft")
+                            .font(.subheadline.weight(.semibold))
+                        Text(hasIndex
+                            ? "Auto-filled from the indexed script data."
+                            : "Index this script first to enable auto-generate.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                Button {
+                    ReaderSidebarHaptic.fire(.light)
+                    generateDraft()
+                } label: {
+                    if isGenerating {
+                        Label("Generating…", systemImage: "wand.and.stars")
+                    } else {
+                        Label("Generate Draft", systemImage: "wand.and.stars")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .controlSize(.small)
+                .disabled(isGenerating || !hasIndex)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    private var recommendationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Recommendation")
+
+            Picker("Recommendation", selection: $recommendation) {
+                ForEach(ScriptCoverage.Recommendation.allCases) { rec in
+                    Text(rec.rawValue).tag(rec)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: recommendation) { _, _ in isDirty = true }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    private var loglineCard: some View {
+        editorCard(title: "Logline", text: $logline, minHeight: 90)
+    }
+
+    private var synopsisCard: some View {
+        editorCard(title: "Synopsis", text: $synopsis, minHeight: 140)
+    }
+
+    private var commentsCard: some View {
+        editorCard(title: "Comments", text: $comments, minHeight: 140)
+    }
+
+    private func editorCard(title: String, text: Binding<String>, minHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader(title)
+
+            TextEditor(text: text)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: minHeight)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+                .onChange(of: text.wrappedValue) { _, _ in isDirty = true }
+        }
+    }
+
+    private var actionsCard: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+            spacing: 10
+        ) {
+            Button {
+                ReaderSidebarHaptic.fire(.light)
+                saveCoverage()
+            } label: {
+                actionContent(
+                    icon: "square.and.arrow.down",
+                    label: "Save",
+                    tint: .orange,
+                    disabled: !isDirty
+                )
+                .hoverEffect(.lift)
+            }
+            .buttonStyle(PressableCardStyle())
+            .disabled(!isDirty)
+
+            Button {
+                ReaderSidebarHaptic.fire(.light)
+                shareText = formatCoverageText()
+            } label: {
+                actionContent(
+                    icon: "square.and.arrow.up",
+                    label: "Share",
+                    tint: .blue,
+                    disabled: logline.isEmpty && synopsis.isEmpty && comments.isEmpty
+                )
+                .hoverEffect(.lift)
+            }
+            .buttonStyle(PressableCardStyle())
+            .disabled(logline.isEmpty && synopsis.isEmpty && comments.isEmpty)
+        }
+    }
+
+    private func actionContent(icon: String, label: String, tint: Color, disabled: Bool) -> some View {
+        let fg = disabled ? Color.secondary : tint
+        let bg = disabled
+            ? Color(.secondarySystemGroupedBackground)
+            : tint.opacity(0.10)
+
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(fg)
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(disabled ? .secondary : .primary)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(bg)
+        )
+        .opacity(disabled ? 0.7 : 1.0)
+    }
+
+    // MARK: - Data
 
     private func loadCoverage() {
         guard let c = coverage else { return }

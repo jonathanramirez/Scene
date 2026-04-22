@@ -18,20 +18,17 @@ struct EditMetadataView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Title") {
-                    TextField("Script title", text: $title)
-                        .autocorrectionDisabled()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    titleCard
+                    colorCard
                 }
-
-                Section {
-                    colorPicker
-                } header: {
-                    Text("Library Icon Color")
-                } footer: {
-                    Text("Color shown on the script's icon in your library.")
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Edit Metadata")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -47,10 +44,49 @@ struct EditMetadataView: View {
         }
     }
 
+    // MARK: - Cards
+
+    private var titleCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Title")
+
+            TextField("Script title", text: $title)
+                .autocorrectionDisabled()
+                .font(.body)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+        }
+    }
+
+    private var colorCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Library Icon Color")
+
+            VStack(alignment: .leading, spacing: 10) {
+                colorPicker
+
+                Text("Color shown on the script's icon in your library.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
     private var colorPicker: some View {
         HStack(spacing: 0) {
             ForEach(ScriptIconColor.allCases) { iconColor in
                 Button {
+                    ReaderSidebarHaptic.fire(.light)
                     selectedColor = iconColor
                 } label: {
                     ZStack {
@@ -70,9 +106,10 @@ struct EditMetadataView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
+                .hoverEffect(.lift)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
     }
 
     private func save() {

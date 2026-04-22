@@ -295,44 +295,20 @@ private struct NoteEditView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Tag") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(NoteTag.allCases) { tag in
-                                Button {
-                                    selectedTag = selectedTag == tag ? nil : tag
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: tag.icon).font(.caption)
-                                        Text(tag.rawValue).font(.caption).fontWeight(.medium)
-                                    }
-                                    .padding(.horizontal, 10).padding(.vertical, 6)
-                                    .background(selectedTag == tag ? tag.color : tag.color.opacity(0.12))
-                                    .foregroundStyle(selectedTag == tag ? .white : tag.color)
-                                    .clipShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-                }
-
-                Section("Note") {
-                    TextEditor(text: $text).frame(minHeight: 160)
-                }
-
-                if let character = note.anchoredCharacterName, !character.isEmpty {
-                    Section("Anchored to") {
-                        Label(character, systemImage: "person.fill")
-                        if let snippet = note.anchoredDialogueSnippet {
-                            Text(snippet).font(.caption).foregroundStyle(.secondary).lineLimit(3)
-                        }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    tagCard
+                    noteCard
+                    if let character = note.anchoredCharacterName, !character.isEmpty {
+                        anchoredCard(character: character)
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("Edit Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -343,6 +319,91 @@ private struct NoteEditView: View {
                         .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+        }
+    }
+
+    // MARK: - Cards
+
+    private var tagCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Tag")
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(NoteTag.allCases) { tag in
+                        Button {
+                            selectedTag = selectedTag == tag ? nil : tag
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: tag.icon).font(.caption)
+                                Text(tag.rawValue).font(.caption).fontWeight(.medium)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(selectedTag == tag ? tag.color : tag.color.opacity(0.12))
+                            .foregroundStyle(selectedTag == tag ? .white : tag.color)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    private var noteCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Note")
+
+            TextEditor(text: $text)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 180)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+        }
+    }
+
+    private func anchoredCard(character: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Anchored to")
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
+                        .frame(width: 28, height: 28)
+                        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    Text(character)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    Spacer(minLength: 0)
+                }
+
+                if let snippet = note.anchoredDialogueSnippet {
+                    Text(snippet)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
         }
     }
 
