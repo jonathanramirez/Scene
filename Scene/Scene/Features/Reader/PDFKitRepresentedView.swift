@@ -21,9 +21,8 @@ struct PDFKitRepresentedView: UIViewRepresentable {
         context.coordinator.configure(containerView: uiView, document: document, modelContext: modelContext)
 
         do {
-            let resolvedURL = try resolveDocumentURL(for: document)
-            let loadedDocument = try loadDocument(from: resolvedURL, bookmark: nil)
-            if uiView.pdfView.document == nil || uiView.pdfView.document?.pageCount != loadedDocument.pageCount {
+            let loadedDocument = try context.coordinator.pdfDocument(for: document)
+            if uiView.pdfView.document !== loadedDocument {
                 uiView.pdfView.document = loadedDocument
             }
 
@@ -52,20 +51,6 @@ struct PDFKitRepresentedView: UIViewRepresentable {
         Coordinator()
     }
 
-    private func resolveDocumentURL(for document: ScriptDocument) throws -> URL {
-        guard let url = document.resolvedFileURL else {
-            throw AppError.pdfOpenFailed
-        }
-        return url
-    }
-
-    private func loadDocument(from url: URL, bookmark: Data?) throws -> PDFDocument {
-        let data = try Data(contentsOf: url)
-        guard let document = PDFDocument(data: data) else {
-            throw AppError.pdfOpenFailed
-        }
-        return document
-    }
 }
 
 final class ReaderContainerView: UIView {
@@ -121,12 +106,43 @@ extension PDFKitRepresentedView {
         private var document: ScriptDocument?
         private var modelContext: ModelContext?
         private var loadedPageIndex = 0
+        private var loadedDocumentID: UUID?
+        private var loadedFileURL: URL?
+        private var loadedFileModificationDate: Date?
+        private var loadedPDFDocument: PDFDocument?
+        private var configuredCanvasIdentifier: ObjectIdentifier?
+        private let toolPicker = PKToolPicker()
+        private var isToolPickerObserving = false
 
         func configure(containerView: ReaderContainerView, document: ScriptDocument, modelContext: ModelContext) {
+            if self.document?.id != document.id {
+                loadedPageIndex = 0
+            }
             self.containerView = containerView
             self.document = document
             self.modelContext = modelContext
             containerView.canvasView.delegate = self
+            configureCanvasDefaultsIfNeeded(containerView.canvasView)
+        }
+
+        func pdfDocument(for document: ScriptDocument) throws -> PDFDocument {
+            guard let url = document.resolvedFileURL else { throw AppError.pdfOpenFailed }
+            guard FileManager.default.fileExists(atPath: url.path) else { throw AppError.fileMissing }
+
+            let modificationDate = fileModificationDate(for: url)
+            if loadedDocumentID == document.id,
+               loadedFileURL == url,
+               loadedFileModificationDate == modificationDate,
+               let loadedPDFDocument {
+                return loadedPDFDocument
+            }
+
+            guard let pdfDocument = PDFDocument(url: url) else { throw AppError.pdfOpenFailed }
+            loadedDocumentID = document.id
+            loadedFileURL = url
+            loadedFileModificationDate = modificationDate
+            loadedPDFDocument = pdfDocument
+            return pdfDocument
         }
 
         func setAnnotationMode(_ isAnnotating: Bool) {
@@ -137,18 +153,10 @@ extension PDFKitRepresentedView {
 
             if isAnnotating {
                 loadDrawing(for: currentPageIndex())
-                if let window = containerView.window {
-                    let toolPicker = PKToolPicker.shared(for: window)
-                    toolPicker?.addObserver(containerView.canvasView)
-                    toolPicker?.setVisible(true, forFirstResponder: containerView.canvasView)
-                    containerView.canvasView.becomeFirstResponder()
-                }
-            } else if let window = containerView.window {
+                showToolPicker(for: containerView.canvasView)
+            } else {
                 persistCurrentCanvasIfNeeded()
-                let toolPicker = PKToolPicker.shared(for: window)
-                toolPicker?.setVisible(false, forFirstResponder: containerView.canvasView)
-                toolPicker?.removeObserver(containerView.canvasView)
-                containerView.canvasView.resignFirstResponder()
+                hideToolPicker(for: containerView.canvasView)
             }
         }
 
@@ -239,6 +247,36 @@ extension PDFKitRepresentedView {
             }
 
             return try? PKDrawing(data: drawingRecord.drawingData)
+        }
+
+        private func configureCanvasDefaultsIfNeeded(_ canvasView: PKCanvasView) {
+            let identifier = ObjectIdentifier(canvasView)
+            guard configuredCanvasIdentifier != identifier else { return }
+            configuredCanvasIdentifier = identifier
+            canvasView.tool = PKInkingTool(.pen, color: .systemBlue, width: 5)
+        }
+
+        private func showToolPicker(for canvasView: PKCanvasView) {
+            if !isToolPickerObserving {
+                toolPicker.addObserver(canvasView)
+                isToolPickerObserving = true
+            }
+            toolPicker.setVisible(true, forFirstResponder: canvasView)
+            canvasView.becomeFirstResponder()
+        }
+
+        private func hideToolPicker(for canvasView: PKCanvasView) {
+            toolPicker.setVisible(false, forFirstResponder: canvasView)
+            if isToolPickerObserving {
+                toolPicker.removeObserver(canvasView)
+                isToolPickerObserving = false
+            }
+            canvasView.resignFirstResponder()
+        }
+
+        private func fileModificationDate(for url: URL) -> Date? {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            return attributes?[.modificationDate] as? Date
         }
     }
 }

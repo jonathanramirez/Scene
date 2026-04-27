@@ -5,7 +5,7 @@ import UIKit
 /// so `ScriptDetailView` never re-renders the same thumbnail twice.
 enum ThumbnailCacheService {
 
-    private static let size = CGSize(width: 160, height: 220)
+    private nonisolated static let size = CGSize(width: 160, height: 220)
 
     // MARK: - Public API
 
@@ -50,7 +50,7 @@ enum ThumbnailCacheService {
 
     // MARK: - Private
 
-    private static func cacheURL(for documentId: String) -> URL? {
+    private nonisolated static func cacheURL(for documentId: String) -> URL? {
         guard let caches = FileManager.default
             .urls(for: .cachesDirectory, in: .userDomainMask).first
         else { return nil }

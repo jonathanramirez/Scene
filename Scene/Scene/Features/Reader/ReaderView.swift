@@ -127,10 +127,8 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         context.coordinator.configure(containerView: uiView, document: document, modelContext: modelContext)
 
         do {
-            guard let url = document.resolvedFileURL else { throw AppError.pdfOpenFailed }
-            let data = try Data(contentsOf: url)
-            guard let loadedDocument = PDFDocument(data: data) else { throw AppError.pdfOpenFailed }
-            if uiView.pdfView.document == nil || uiView.pdfView.document?.pageCount != loadedDocument.pageCount {
+            let loadedDocument = try context.coordinator.pdfDocument(for: document)
+            if uiView.pdfView.document !== loadedDocument {
                 uiView.pdfView.document = loadedDocument
             }
 
@@ -167,47 +165,69 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         private var document: ScriptDocument?
         private var modelContext: ModelContext?
         private var loadedPageIndex = 0
+        private var loadedDocumentID: UUID?
+        private var loadedFileURL: URL?
+        private var loadedFileModificationDate: Date?
+        private var loadedPDFDocument: PDFDocument?
         private var pageChangedObserver: NSObjectProtocol?
         private var pageOverlayViews: [Int: UIImageView] = [:]
+        private var configuredCanvasIdentifier: ObjectIdentifier?
         private var lastClearTrigger = 0
+        private let toolPicker = PKToolPicker()
+        private var isToolPickerObserving = false
         var onPageChanged: ((Int) -> Void)?
 
         func configure(containerView: EmbeddedReaderContainerView, document: ScriptDocument, modelContext: ModelContext) {
+            if self.document?.id != document.id {
+                loadedPageIndex = 0
+                pageOverlayViews.removeAll()
+            }
             self.containerView = containerView
             self.document = document
             self.modelContext = modelContext
             containerView.canvasView.delegate = self
-            containerView.canvasView.tool = PKInkingTool(.pen, color: .systemBlue, width: 5)
+            configureCanvasDefaultsIfNeeded(containerView.canvasView)
             containerView.pdfView.pageOverlayViewProvider = self
             installPageObserverIfNeeded(for: containerView.pdfView)
+        }
+
+        func pdfDocument(for document: ScriptDocument) throws -> PDFDocument {
+            guard let url = document.resolvedFileURL else { throw AppError.pdfOpenFailed }
+            guard FileManager.default.fileExists(atPath: url.path) else { throw AppError.fileMissing }
+
+            let modificationDate = fileModificationDate(for: url)
+            if loadedDocumentID == document.id,
+               loadedFileURL == url,
+               loadedFileModificationDate == modificationDate,
+               let loadedPDFDocument {
+                return loadedPDFDocument
+            }
+
+            guard let pdfDocument = PDFDocument(url: url) else { throw AppError.pdfOpenFailed }
+            loadedDocumentID = document.id
+            loadedFileURL = url
+            loadedFileModificationDate = modificationDate
+            loadedPDFDocument = pdfDocument
+            pageOverlayViews.removeAll()
+            return pdfDocument
         }
 
         func setAnnotationMode(_ isAnnotating: Bool) {
             guard let containerView else { return }
             containerView.canvasView.isHidden = !isAnnotating
             containerView.canvasView.isUserInteractionEnabled = isAnnotating
-            containerView.pdfView.isUserInteractionEnabled = true
+	            containerView.pdfView.isUserInteractionEnabled = true
 
-            if isAnnotating {
-                containerView.pdfView.displayMode = .singlePage
-                loadDrawing(for: currentPageIndex())
-                refreshAllOverlays(hidden: true)
-                if let window = containerView.window {
-                    let toolPicker = PKToolPicker.shared(for: window)
-                    toolPicker?.addObserver(containerView.canvasView)
-                    toolPicker?.setVisible(true, forFirstResponder: containerView.canvasView)
-                    containerView.canvasView.becomeFirstResponder()
-                }
-            } else if let window = containerView.window {
-                persistCurrentCanvasIfNeeded()
-                containerView.pdfView.displayMode = .singlePageContinuous
-                containerView.pdfView.autoScales = true
-                let toolPicker = PKToolPicker.shared(for: window)
-                toolPicker?.setVisible(false, forFirstResponder: containerView.canvasView)
-                toolPicker?.removeObserver(containerView.canvasView)
-                containerView.canvasView.resignFirstResponder()
-                refreshAllOverlays(hidden: false)
-            }
+	            if isAnnotating {
+	                loadDrawing(for: currentPageIndex())
+	                refreshAllOverlays(hidden: true)
+	                showToolPicker(for: containerView.canvasView)
+	            } else {
+	                persistCurrentCanvasIfNeeded()
+	                containerView.pdfView.autoScales = true
+	                hideToolPicker(for: containerView.canvasView)
+	                refreshAllOverlays(hidden: false)
+	            }
         }
 
         func setPencilOnly(_ isPencilOnly: Bool) {
@@ -364,19 +384,51 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 object: pdfView,
                 queue: .main
             ) { [weak self] notification in
-                guard
-                    let self,
-                    let pdfView = notification.object as? PDFView,
-                    let page = pdfView.currentPage
-                else { return }
+                MainActor.assumeIsolated {
+                    guard
+                        let self,
+                        let pdfView = notification.object as? PDFView,
+                        let page = pdfView.currentPage
+                    else { return }
 
-                self.persistCurrentCanvasIfNeeded()
-                let pageIndex = pdfView.document?.index(for: page) ?? self.loadedPageIndex
-                self.loadDrawing(for: pageIndex)
-                self.onPageChanged?(pageIndex)
-                let totalPages = pdfView.document?.pageCount ?? 0
-                self.updateReadingSession(pageIndex: pageIndex, totalPages: totalPages)
+                    self.persistCurrentCanvasIfNeeded()
+                    let pageIndex = pdfView.document?.index(for: page) ?? self.loadedPageIndex
+                    self.loadDrawing(for: pageIndex)
+                    self.onPageChanged?(pageIndex)
+                    let totalPages = pdfView.document?.pageCount ?? 0
+                    self.updateReadingSession(pageIndex: pageIndex, totalPages: totalPages)
+                }
             }
+        }
+
+        private func configureCanvasDefaultsIfNeeded(_ canvasView: PKCanvasView) {
+            let identifier = ObjectIdentifier(canvasView)
+            guard configuredCanvasIdentifier != identifier else { return }
+            configuredCanvasIdentifier = identifier
+            canvasView.tool = PKInkingTool(.pen, color: .systemBlue, width: 5)
+        }
+
+        private func showToolPicker(for canvasView: PKCanvasView) {
+            if !isToolPickerObserving {
+                toolPicker.addObserver(canvasView)
+                isToolPickerObserving = true
+            }
+            toolPicker.setVisible(true, forFirstResponder: canvasView)
+            canvasView.becomeFirstResponder()
+        }
+
+        private func hideToolPicker(for canvasView: PKCanvasView) {
+            toolPicker.setVisible(false, forFirstResponder: canvasView)
+            if isToolPickerObserving {
+                toolPicker.removeObserver(canvasView)
+                isToolPickerObserving = false
+            }
+            canvasView.resignFirstResponder()
+        }
+
+        private func fileModificationDate(for url: URL) -> Date? {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            return attributes?[.modificationDate] as? Date
         }
 
         private func updateReadingSession(pageIndex: Int, totalPages: Int) {
@@ -426,6 +478,8 @@ private final class EmbeddedReaderContainerView: UIView {
         canvasView.isOpaque = false
         canvasView.drawingPolicy = .anyInput
         canvasView.isScrollEnabled = false
+        canvasView.isHidden = true
+        canvasView.isUserInteractionEnabled = false
 
         addSubview(pdfView)
         addSubview(canvasView)

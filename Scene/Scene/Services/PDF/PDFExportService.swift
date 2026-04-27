@@ -11,8 +11,7 @@ enum PDFExportService {
             throw AppError.noFileURL
         }
 
-        let data = try Data(contentsOf: sourceURL)
-        guard let pdfDocument = PDFDocument(data: data) else {
+        guard let pdfDocument = PDFDocument(url: sourceURL) else {
             throw AppError.pdfOpenFailed
         }
 

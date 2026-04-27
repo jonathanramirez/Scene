@@ -63,6 +63,9 @@ struct ScriptDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(document.title)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            markOpened()
+        }
         .task {
             await loadThumbnail()
             if let session { selectedMode = session.mode }
@@ -597,6 +600,11 @@ struct ScriptDetailView: View {
             let s = ScriptReadingSession(documentId: document.id, mode: mode)
             context.insert(s)
         }
+        try? context.save()
+    }
+
+    private func markOpened() {
+        document.lastOpenedAt = Date()
         try? context.save()
     }
 

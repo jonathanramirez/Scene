@@ -180,6 +180,7 @@ struct LyricsPracticeView: View {
         }
         .onChange(of: hideMyLines) { _, v in session.memoryMode = v }
         .onChange(of: speakMyLines) { _, v in session.readAloudEnabled = v }
+        .onChange(of: speechRate) { _, v in session.speechRate = v }
         .onChange(of: controller.currentTurn?.sequenceIndex ?? -1) { _, _ in
             session.currentTurnIndex = controller.currentTurn?.sequenceIndex
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
@@ -329,6 +330,7 @@ struct LyricsPracticeView: View {
                         session.currentTurnIndex = controller.currentTurn?.sequenceIndex
                         session.memoryMode = hideMyLines
                         session.readAloudEnabled = speakMyLines
+                        session.speechRate = speechRate
                         isShowingPractice = true
                     } label: {
                         Image(systemName: "mic")
@@ -405,7 +407,8 @@ struct LyricsPracticeView: View {
             selectedCharacter: selectedCharacter,
             responseWindow: responseWindow,
             betweenTurnsPause: betweenTurnsPause,
-            speakSelectedCharacter: speakMyLines
+            speakSelectedCharacter: speakMyLines,
+            speechRate: speechRate
         )
     }
 
@@ -422,7 +425,8 @@ struct LyricsPracticeView: View {
             selectedCharacter: selectedCharacter,
             responseWindow: responseWindow,
             betweenTurnsPause: betweenTurnsPause,
-            speakSelectedCharacter: speakMyLines
+            speakSelectedCharacter: speakMyLines,
+            speechRate: speechRate
         )
     }
 

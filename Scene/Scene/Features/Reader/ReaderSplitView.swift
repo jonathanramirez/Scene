@@ -20,6 +20,9 @@ struct ReaderSplitView: View {
     @State private var currentPageIndex = 0
     @State private var isShowingAddBookmark = false
     @State private var bookmarkLabelDraft = ""
+    @State private var isShowingAddNote = false
+    @State private var noteDraft = ""
+    @State private var selectedNoteTag: NoteTag?
     @State private var selectedCharacterForDetail: ScriptCharacter? = nil
 
     @Query(sort: \ScriptBookmark.createdAt, order: .reverse)
@@ -111,27 +114,38 @@ struct ReaderSplitView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                    }
+	            .toolbar {
+	                ToolbarItemGroup(placement: .topBarLeading) {
+	                    Button {
+	                        dismiss()
+	                    } label: {
+	                        Image(systemName: "chevron.left")
+	                    }
+	                    .accessibilityLabel("Close reader")
 
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
-                        }
-                    } label: {
-                        Image(systemName: "sidebar.left")
-                    }
-                }
+	                    Button {
+	                        withAnimation(.easeInOut(duration: 0.2)) {
+	                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
+	                        }
+	                    } label: {
+	                        Image(systemName: "sidebar.left")
+	                    }
+	                    .accessibilityLabel(columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar")
+	                }
 
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // Bookmark
-                    Button {
-                        bookmarkLabelDraft = ""
+	                ToolbarItemGroup(placement: .topBarTrailing) {
+	                    Button {
+	                        noteDraft = ""
+	                        selectedNoteTag = nil
+	                        isShowingAddNote = true
+	                    } label: {
+	                        Image(systemName: "note.text.badge.plus")
+	                    }
+	                    .accessibilityLabel("Add note")
+
+	                    // Bookmark
+	                    Button {
+	                        bookmarkLabelDraft = ""
                         isShowingAddBookmark = true
                     } label: {
                         Image(systemName: "bookmark")
@@ -185,33 +199,159 @@ struct ReaderSplitView: View {
                     }
                 }
             }
-            .alert("Add Bookmark", isPresented: $isShowingAddBookmark) {
-                TextField("Label (optional)", text: $bookmarkLabelDraft)
-                Button("Add") { saveBookmark() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Bookmarking page \(currentPageIndex + 1)")
-            }
-    }
+	            .alert("Add Bookmark", isPresented: $isShowingAddBookmark) {
+	                TextField("Label (optional)", text: $bookmarkLabelDraft)
+	                Button("Add") { saveBookmark() }
+	                Button("Cancel", role: .cancel) {}
+	            } message: {
+	                Text("Bookmarking page \(currentPageIndex + 1)")
+	            }
+	            .sheet(isPresented: $isShowingAddNote) {
+	                ReaderAddNoteView(
+	                    pageIndex: currentPageIndex,
+	                    text: $noteDraft,
+	                    selectedTag: $selectedNoteTag,
+	                    onCancel: {
+	                        isShowingAddNote = false
+	                    },
+	                    onSave: {
+	                        saveNote()
+	                    }
+	                )
+	            }
+	    }
 
-    private func saveBookmark() {
-        let label = bookmarkLabelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bookmark = ScriptBookmark(
+	private func saveBookmark() {
+	    let label = bookmarkLabelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+	    let bookmark = ScriptBookmark(
             documentId: document.id,
             pageIndex: currentPageIndex,
             label: label.isEmpty ? nil : label
         )
         context.insert(bookmark)
-        try? context.save()
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-    }
+	    try? context.save()
+	    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+	}
+
+	private func saveNote() {
+	    let trimmed = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+	    guard !trimmed.isEmpty else { return }
+
+	    let note = ScriptNote(
+	        documentId: document.id,
+	        pageIndex: currentPageIndex,
+	        text: trimmed,
+	        tag: selectedNoteTag
+	    )
+	    context.insert(note)
+	    try? context.save()
+	    noteDraft = ""
+	    selectedNoteTag = nil
+	    isShowingAddNote = false
+	    UINotificationFeedbackGenerator().notificationOccurred(.success)
+	}
 
     private var dialogueTurnCounts: [String: Int] {
         guard let parseResult = vm.parseResult else { return [:] }
         return parseResult.dialogueTurns.reduce(into: [:]) { counts, turn in
             counts[turn.characterName, default: 0] += 1
+	}
+}
+
+private struct ReaderAddNoteView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let pageIndex: Int
+    @Binding var text: String
+    @Binding var selectedTag: NoteTag?
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    tagCard
+                    noteCard
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("Add Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        onCancel()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save") {
+                        onSave()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
     }
+
+    private var tagCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Tag")
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(NoteTag.allCases) { tag in
+                        Button {
+                            selectedTag = selectedTag == tag ? nil : tag
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: tag.icon)
+                                    .font(.caption)
+                                Text(tag.rawValue)
+                                    .font(.caption.weight(.medium))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(selectedTag == tag ? tag.color : tag.color.opacity(0.12))
+                            .foregroundStyle(selectedTag == tag ? .white : tag.color)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.secondarySystemGroupedBackground))
+            )
+        }
+    }
+
+    private var noteCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ReaderSidebarSectionHeader("Page \(pageIndex + 1)")
+
+            TextEditor(text: $text)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 180)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.secondarySystemGroupedBackground))
+                )
+        }
+    }
+}
 
     /// Seeds the in-memory ScriptSessionState from the persisted ScriptReadingSession
     /// so the app remembers the last rehearsed character across app restarts.
