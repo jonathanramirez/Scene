@@ -9,13 +9,28 @@ struct ReaderSidebarHeaderCard: View {
     let characterCount: Int
     let isParsing: Bool
     let indexedAt: Date?
+    let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.title3.weight(.semibold))
-                .lineLimit(2)
+            HStack(alignment: .top, spacing: 12) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 0)
+
+                Button(action: onClose) {
+                    Image(systemName: "sidebar.left")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 34, height: 34)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(.primary)
+                .accessibilityLabel("Hide sidebar")
+            }
 
             if let scene = currentScene {
                 HStack(spacing: 4) {

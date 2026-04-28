@@ -13,20 +13,25 @@ struct ReaderSidebarQuickActions: View {
         VStack(alignment: .leading, spacing: 10) {
             ReaderSidebarSectionHeader("Quick Actions")
 
-            if hasIndex {
-                LazyVGrid(
-                    columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
-                    spacing: 10
-                ) {
+            if !hasIndex {
+                if isParsing {
+                    indexingPlaceholder
+                } else {
+                    buildIndexPrompt
+                }
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+                spacing: 10
+            ) {
+                if hasIndex {
                     card(icon: "mic.fill", label: "Practice", tint: .orange, action: onPractice)
                     card(icon: "text.alignleft", label: "Lyrics", tint: .purple, action: onLyrics)
-                    card(icon: "magnifyingglass", label: "Search", tint: .blue, action: onSearch)
-                    card(icon: "bookmark", label: "Bookmark", tint: .orange, action: onAddBookmark)
                 }
-            } else if isParsing {
-                indexingPlaceholder
-            } else {
-                buildIndexPrompt
+
+                card(icon: "magnifyingglass", label: "Search", tint: .blue, action: onSearch)
+                card(icon: "bookmark", label: "Bookmark", tint: .orange, action: onAddBookmark)
             }
         }
     }
@@ -88,7 +93,7 @@ struct ReaderSidebarQuickActions: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Build Index")
                         .font(.subheadline.weight(.semibold))
-                    Text("Unlocks Practice, Lyrics & Search")
+                    Text("Unlocks Practice & Lyrics")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

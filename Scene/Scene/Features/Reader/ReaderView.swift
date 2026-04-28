@@ -10,6 +10,7 @@ struct ReaderView: View {
     @Environment(\.modelContext) private var modelContext
     let document: ScriptDocument
     @Binding var jumpToPage: Int?
+    @Binding var searchHighlight: PDFSearchHighlight?
     @State private var isAnnotating = false
     @State private var isPencilOnly = false
     @State private var clearCurrentPageTrigger = 0
@@ -22,6 +23,7 @@ struct ReaderView: View {
             EmbeddedPDFKitRepresentedView(
                 document: document,
                 jumpToPage: $jumpToPage,
+                searchHighlight: $searchHighlight,
                 isAnnotating: isAnnotating,
                 isPencilOnly: isPencilOnly,
                 clearCurrentPageTrigger: clearCurrentPageTrigger,
@@ -112,6 +114,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
     @Environment(\.modelContext) private var modelContext
     let document: ScriptDocument
     @Binding var jumpToPage: Int?
+    @Binding var searchHighlight: PDFSearchHighlight?
     let isAnnotating: Bool
     let isPencilOnly: Bool
     let clearCurrentPageTrigger: Int
@@ -142,6 +145,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 }
             }
 
+            context.coordinator.applySearchHighlight(searchHighlight, in: uiView.pdfView)
             context.coordinator.setPencilOnly(isPencilOnly)
             context.coordinator.setAnnotationMode(isAnnotating)
             context.coordinator.handleClearTrigger(clearCurrentPageTrigger)
@@ -173,6 +177,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         private var pageOverlayViews: [Int: UIImageView] = [:]
         private var configuredCanvasIdentifier: ObjectIdentifier?
         private var lastClearTrigger = 0
+        private var lastSearchHighlightID: PDFSearchHighlight.ID?
         private let toolPicker = PKToolPicker()
         private var isToolPickerObserving = false
         var onPageChanged: ((Int) -> Void)?
@@ -238,6 +243,45 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             guard trigger != lastClearTrigger else { return }
             lastClearTrigger = trigger
             clearDrawing(for: currentPageIndex())
+        }
+
+        func applySearchHighlight(_ highlight: PDFSearchHighlight?, in pdfView: PDFView) {
+            guard let highlight else {
+                if lastSearchHighlightID != nil {
+                    pdfView.highlightedSelections = nil
+                    pdfView.currentSelection = nil
+                    lastSearchHighlightID = nil
+                }
+                return
+            }
+            guard lastSearchHighlightID != highlight.id else { return }
+            lastSearchHighlightID = highlight.id
+
+            guard
+                let document = pdfView.document,
+                let page = document.page(at: highlight.pageIndex)
+            else { return }
+
+            let selections = document.findString(
+                highlight.query,
+                withOptions: [.caseInsensitive, .diacriticInsensitive]
+            )
+            let pageSelections = selections.filter { selection in
+                selection.pages.contains { $0 === page }
+            }
+            pdfView.highlightedSelections = pageSelections
+
+            guard !pageSelections.isEmpty else {
+                pdfView.go(to: page)
+                loadDrawing(for: highlight.pageIndex)
+                return
+            }
+
+            let selectedIndex = min(highlight.occurrenceIndex, pageSelections.count - 1)
+            let selectedMatch = pageSelections[selectedIndex]
+            pdfView.currentSelection = selectedMatch
+            pdfView.go(to: selectedMatch)
+            loadDrawing(for: highlight.pageIndex)
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {

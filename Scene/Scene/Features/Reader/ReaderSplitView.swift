@@ -24,6 +24,7 @@ struct ReaderSplitView: View {
     @State private var noteDraft = ""
     @State private var selectedNoteTag: NoteTag?
     @State private var selectedCharacterForDetail: ScriptCharacter? = nil
+    @State private var activeSearchHighlight: PDFSearchHighlight?
 
     @Query(sort: \ScriptBookmark.createdAt, order: .reverse)
     private var allBookmarks: [ScriptBookmark]
@@ -54,7 +55,6 @@ struct ReaderSplitView: View {
         .toolbar(.hidden, for: .tabBar)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(removing: .sidebarToggle)
         .task {
             if !hasAppliedInitialNavigation {
                 vm.jumpToPage = initialJumpToPage
@@ -78,10 +78,13 @@ struct ReaderSplitView: View {
             }
         }
         .sheet(isPresented: $isShowingSearch) {
-            if let parseResult = vm.parseResult {
-                ScriptSearchView(document: document, parseResult: parseResult) { page in
-                    vm.jumpToPage = page
-                }
+            ScriptSearchView(document: document) { match in
+                activeSearchHighlight = PDFSearchHighlight(
+                    query: match.query,
+                    pageIndex: match.pageIndex,
+                    occurrenceIndex: match.occurrenceIndex
+                )
+                vm.jumpToPage = match.pageIndex
             }
         }
         .sheet(item: $selectedCharacterForDetail) { character in
@@ -107,149 +110,140 @@ struct ReaderSplitView: View {
     }
 
     private var readerDetail: some View {
-        ReaderView(document: document, jumpToPage: $vm.jumpToPage, onPageChanged: { page in
-                currentPageIndex = page
-                sessionStore.session(for: document.id).currentPage = page
-            })
-            .navigationTitle("")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
-	            .toolbar {
-	                ToolbarItemGroup(placement: .topBarLeading) {
-	                    Button {
-	                        dismiss()
-	                    } label: {
-	                        Image(systemName: "chevron.left")
-	                    }
-	                    .accessibilityLabel("Close reader")
+        ReaderView(document: document, jumpToPage: $vm.jumpToPage, searchHighlight: $activeSearchHighlight, onPageChanged: { page in
+            currentPageIndex = page
+            sessionStore.session(for: document.id).currentPage = page
+        })
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .accessibilityLabel("Close reader")
+            }
 
-	                    Button {
-	                        withAnimation(.easeInOut(duration: 0.2)) {
-	                            columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
-	                        }
-	                    } label: {
-	                        Image(systemName: "sidebar.left")
-	                    }
-	                    .accessibilityLabel(columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar")
-	                }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    noteDraft = ""
+                    selectedNoteTag = nil
+                    isShowingAddNote = true
+                } label: {
+                    Image(systemName: "note.text.badge.plus")
+                }
+                .accessibilityLabel("Add note")
 
-	                ToolbarItemGroup(placement: .topBarTrailing) {
-	                    Button {
-	                        noteDraft = ""
-	                        selectedNoteTag = nil
-	                        isShowingAddNote = true
-	                    } label: {
-	                        Image(systemName: "note.text.badge.plus")
-	                    }
-	                    .accessibilityLabel("Add note")
+                Button {
+                    bookmarkLabelDraft = ""
+                    isShowingAddBookmark = true
+                } label: {
+                    Image(systemName: "bookmark")
+                }
 
-	                    // Bookmark
-	                    Button {
-	                        bookmarkLabelDraft = ""
-                        isShowingAddBookmark = true
-                    } label: {
-                        Image(systemName: "bookmark")
+                Menu {
+                    if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
+                        Button {
+                            isShowingPractice = true
+                        } label: {
+                            Label("Practice Mode", systemImage: "mic")
+                        }
+
+                        Button {
+                            isShowingLyrics = true
+                        } label: {
+                            Label("Lyrics Mode", systemImage: "text.alignleft")
+                        }
+
+                        Divider()
                     }
 
-                    // Rehearse menu — practice, lyrics, search + index management
-                    Menu {
-                        if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
-                            Button {
-                                isShowingPractice = true
-                            } label: {
-                                Label("Practice Mode", systemImage: "mic")
-                            }
-
-                            Button {
-                                isShowingLyrics = true
-                            } label: {
-                                Label("Lyrics Mode", systemImage: "text.alignleft")
-                            }
-
-                            Divider()
-
-                            Button {
-                                isShowingSearch = true
-                            } label: {
-                                Label("Search Script", systemImage: "magnifyingglass")
-                            }
-
-                            Divider()
-                        }
-
-                        if vm.isParsing {
-                            Label("Indexing…", systemImage: "gearshape")
-                        } else {
-                            Button {
-                                Task { await vm.buildIndex(for: document, context: context, forceRebuild: true) }
-                            } label: {
-                                Label(
-                                    vm.indexedAt != nil ? "Reindex Script" : "Build Index",
-                                    systemImage: "wand.and.stars"
-                                )
-                            }
-                        }
+                    Button {
+                        isShowingSearch = true
                     } label: {
-                        if vm.isParsing {
-                            ProgressView()
-                        } else {
-                            Label("Rehearse", systemImage: "theatermasks")
-                                .symbolVariant(vm.indexedAt != nil ? .none : .none)
+                        Label("Search Script", systemImage: "magnifyingglass")
+                    }
+
+                    if vm.parseResult?.dialogueTurns.isEmpty == false {
+                        Divider()
+                    }
+
+                    if vm.isParsing {
+                        Label("Indexing…", systemImage: "gearshape")
+                    } else {
+                        Button {
+                            Task { await vm.buildIndex(for: document, context: context, forceRebuild: true) }
+                        } label: {
+                            Label(
+                                vm.indexedAt != nil ? "Reindex Script" : "Build Index",
+                                systemImage: "wand.and.stars"
+                            )
                         }
+                    }
+                } label: {
+                    if vm.isParsing {
+                        ProgressView()
+                    } else {
+                        Label("Rehearse", systemImage: "theatermasks")
+                            .symbolVariant(vm.indexedAt != nil ? .none : .none)
                     }
                 }
             }
-	            .alert("Add Bookmark", isPresented: $isShowingAddBookmark) {
-	                TextField("Label (optional)", text: $bookmarkLabelDraft)
-	                Button("Add") { saveBookmark() }
-	                Button("Cancel", role: .cancel) {}
-	            } message: {
-	                Text("Bookmarking page \(currentPageIndex + 1)")
-	            }
-	            .sheet(isPresented: $isShowingAddNote) {
-	                ReaderAddNoteView(
-	                    pageIndex: currentPageIndex,
-	                    text: $noteDraft,
-	                    selectedTag: $selectedNoteTag,
-	                    onCancel: {
-	                        isShowingAddNote = false
-	                    },
-	                    onSave: {
-	                        saveNote()
-	                    }
-	                )
-	            }
-	    }
+        }
+        .alert("Add Bookmark", isPresented: $isShowingAddBookmark) {
+            TextField("Label (optional)", text: $bookmarkLabelDraft)
+            Button("Add") { saveBookmark() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Bookmarking page \(currentPageIndex + 1)")
+        }
+        .sheet(isPresented: $isShowingAddNote) {
+            ReaderAddNoteView(
+                pageIndex: currentPageIndex,
+                text: $noteDraft,
+                selectedTag: $selectedNoteTag,
+                onCancel: {
+                    isShowingAddNote = false
+                },
+                onSave: {
+                    saveNote()
+                }
+            )
+        }
+    }
 
-	private func saveBookmark() {
-	    let label = bookmarkLabelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-	    let bookmark = ScriptBookmark(
+    private func saveBookmark() {
+        let label = bookmarkLabelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bookmark = ScriptBookmark(
             documentId: document.id,
             pageIndex: currentPageIndex,
             label: label.isEmpty ? nil : label
         )
         context.insert(bookmark)
-	    try? context.save()
-	    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-	}
+        try? context.save()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
 
-	private func saveNote() {
-	    let trimmed = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-	    guard !trimmed.isEmpty else { return }
+    private func saveNote() {
+        let trimmed = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
 
-	    let note = ScriptNote(
-	        documentId: document.id,
-	        pageIndex: currentPageIndex,
-	        text: trimmed,
-	        tag: selectedNoteTag
-	    )
-	    context.insert(note)
-	    try? context.save()
-	    noteDraft = ""
-	    selectedNoteTag = nil
-	    isShowingAddNote = false
-	    UINotificationFeedbackGenerator().notificationOccurred(.success)
-	}
+        let note = ScriptNote(
+            documentId: document.id,
+            pageIndex: currentPageIndex,
+            text: trimmed,
+            tag: selectedNoteTag
+        )
+        context.insert(note)
+        try? context.save()
+        noteDraft = ""
+        selectedNoteTag = nil
+        isShowingAddNote = false
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
 
     private var dialogueTurnCounts: [String: Int] {
         guard let parseResult = vm.parseResult else { return [:] }
@@ -413,7 +407,12 @@ private struct ReaderAddNoteView: View {
                     parseResult: vm.parseResult,
                     characterCount: filteredCharacters.count,
                     isParsing: vm.isParsing,
-                    indexedAt: vm.indexedAt
+                    indexedAt: vm.indexedAt,
+                    onClose: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            columnVisibility = .detailOnly
+                        }
+                    }
                 )
 
                 ReaderSidebarQuickActions(
