@@ -25,12 +25,23 @@ struct ReaderSplitView: View {
     @State private var selectedNoteTag: NoteTag?
     @State private var selectedCharacterForDetail: ScriptCharacter? = nil
     @State private var activeSearchHighlight: PDFSearchHighlight?
+    @State private var isShowingPDFReadingControls = false
+    @State private var isPDFReadingOverlayEnabled = false
+    @State private var isPDFReadingMuteAll = false
+    @State private var mutedPDFReadingCharacters: Set<String> = []
 
     @Query(sort: \ScriptBookmark.createdAt, order: .reverse)
     private var allBookmarks: [ScriptBookmark]
 
+    @Query(sort: \ScriptNote.updatedAt, order: .reverse)
+    private var allNotes: [ScriptNote]
+
     private var bookmarks: [ScriptBookmark] {
         allBookmarks.filter { $0.documentId == document.id }
+    }
+
+    private var notes: [ScriptNote] {
+        allNotes.filter { $0.documentId == document.id }
     }
 
     init(document: ScriptDocument, initialJumpToPage: Int? = nil, initialPracticeTurnSequenceIndex: Int? = nil) {
@@ -87,6 +98,16 @@ struct ReaderSplitView: View {
                 vm.jumpToPage = match.pageIndex
             }
         }
+        .sheet(isPresented: $isShowingPDFReadingControls) {
+            if let parseResult = vm.parseResult {
+                PDFReadingControlsView(
+                    parseResult: parseResult,
+                    isEnabled: $isPDFReadingOverlayEnabled,
+                    isMuteAll: $isPDFReadingMuteAll,
+                    mutedCharacters: $mutedPDFReadingCharacters
+                )
+            }
+        }
         .sheet(item: $selectedCharacterForDetail) { character in
             if let parseResult = vm.parseResult {
                 NavigationStack {
@@ -110,10 +131,21 @@ struct ReaderSplitView: View {
     }
 
     private var readerDetail: some View {
-        ReaderView(document: document, jumpToPage: $vm.jumpToPage, searchHighlight: $activeSearchHighlight, onPageChanged: { page in
+        ReaderView(
+            document: document,
+            dialogueTurns: vm.parseResult?.dialogueTurns ?? [],
+            dialogueHighlightSettings: PDFDialogueHighlightSettings(
+                isEnabled: isPDFReadingOverlayEnabled,
+                mutedCharacters: mutedPDFReadingCharacters,
+                isMuteAll: isPDFReadingMuteAll
+            ),
+            jumpToPage: $vm.jumpToPage,
+            searchHighlight: $activeSearchHighlight,
+            onPageChanged: { page in
             currentPageIndex = page
             sessionStore.session(for: document.id).currentPage = page
-        })
+            }
+        )
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
@@ -146,6 +178,26 @@ struct ReaderSplitView: View {
 
                 Menu {
                     if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
+                        Button {
+                            isPDFReadingOverlayEnabled.toggle()
+                            if isPDFReadingOverlayEnabled {
+                                isPDFReadingMuteAll = false
+                            }
+                        } label: {
+                            Label(
+                                isPDFReadingOverlayEnabled ? "Hide PDF Reading Colors" : "Show PDF Reading Colors",
+                                systemImage: "highlighter"
+                            )
+                        }
+
+                        Button {
+                            isShowingPDFReadingControls = true
+                        } label: {
+                            Label("PDF Reading Controls", systemImage: "slider.horizontal.3")
+                        }
+
+                        Divider()
+
                         Button {
                             isShowingPractice = true
                         } label: {
@@ -235,7 +287,8 @@ struct ReaderSplitView: View {
             documentId: document.id,
             pageIndex: currentPageIndex,
             text: trimmed,
-            tag: selectedNoteTag
+            tag: selectedNoteTag,
+            rectString: defaultNoteAnchorString(for: currentPageIndex)
         )
         context.insert(note)
         try? context.save()
@@ -243,6 +296,12 @@ struct ReaderSplitView: View {
         selectedNoteTag = nil
         isShowingAddNote = false
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    private func defaultNoteAnchorString(for pageIndex: Int) -> String {
+        let pageNoteCount = notes.filter { $0.pageIndex == pageIndex }.count
+        let y = min(0.14 + (Double(pageNoteCount % 6) * 0.08), 0.58)
+        return String(format: "%.3f,%.3f", 0.88, y)
     }
 
     private var dialogueTurnCounts: [String: Int] {
@@ -344,6 +403,107 @@ private struct ReaderAddNoteView: View {
                         .fill(Color(.secondarySystemGroupedBackground))
                 )
         }
+    }
+}
+
+private struct PDFReadingControlsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let parseResult: ScriptParseResult
+    @Binding var isEnabled: Bool
+    @Binding var isMuteAll: Bool
+    @Binding var mutedCharacters: Set<String>
+
+    private var characters: [String] {
+        let speakers = Set(parseResult.dialogueTurns.map(\.characterName))
+        return parseResult.characters
+            .map(\.name)
+            .filter { speakers.contains($0) }
+            .sorted()
+    }
+
+    private var turnCounts: [String: Int] {
+        parseResult.dialogueTurns.reduce(into: [:]) { counts, turn in
+            counts[turn.characterName, default: 0] += 1
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Toggle("Highlight dialogue on PDF", isOn: $isEnabled)
+
+                    Toggle("Mute all characters", isOn: $isMuteAll)
+                        .disabled(!isEnabled)
+
+                    HStack {
+                        Button("Unmute All") {
+                            mutedCharacters.removeAll()
+                            isMuteAll = false
+                            isEnabled = true
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Mute All") {
+                            isMuteAll = true
+                            isEnabled = true
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.vertical, 4)
+                } footer: {
+                    Text("Muted characters are not colored on the PDF.")
+                }
+
+                Section("Characters") {
+                    ForEach(characters, id: \.self) { character in
+                        Toggle(isOn: binding(for: character)) {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(PDFDialogueHighlightPalette.swiftUIColor(
+                                        for: character,
+                                        allCharacters: characters
+                                    ))
+                                    .frame(width: 14, height: 14)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(character)
+                                        .font(.body.weight(.medium))
+
+                                    Text("\(turnCounts[character, default: 0]) turns")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .disabled(!isEnabled || isMuteAll)
+                    }
+                }
+            }
+            .navigationTitle("PDF Reading")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func binding(for character: String) -> Binding<Bool> {
+        Binding(
+            get: { !mutedCharacters.contains(character) },
+            set: { isVisible in
+                isEnabled = true
+                isMuteAll = false
+                if isVisible {
+                    mutedCharacters.remove(character)
+                } else {
+                    mutedCharacters.insert(character)
+                }
+            }
+        )
     }
 }
 

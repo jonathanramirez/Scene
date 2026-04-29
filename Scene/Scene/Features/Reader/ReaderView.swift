@@ -8,7 +8,11 @@ internal import os
 
 struct ReaderView: View {
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \ScriptNote.updatedAt, order: .reverse) private var allNotes: [ScriptNote]
+
     let document: ScriptDocument
+    let dialogueTurns: [ScriptDialogueTurn]
+    let dialogueHighlightSettings: PDFDialogueHighlightSettings
     @Binding var jumpToPage: Int?
     @Binding var searchHighlight: PDFSearchHighlight?
     @State private var isAnnotating = false
@@ -22,6 +26,9 @@ struct ReaderView: View {
         VStack(spacing: 0) {
             EmbeddedPDFKitRepresentedView(
                 document: document,
+                notes: notes,
+                dialogueTurns: dialogueTurns,
+                dialogueHighlightSettings: dialogueHighlightSettings,
                 jumpToPage: $jumpToPage,
                 searchHighlight: $searchHighlight,
                 isAnnotating: isAnnotating,
@@ -89,6 +96,10 @@ struct ReaderView: View {
         }
     }
 
+    private var notes: [ScriptNote] {
+        allNotes.filter { $0.documentId == document.id }
+    }
+
     private func exportAnnotatedPDF() {
         do {
             exportURL = try PDFExportService.exportAnnotatedPDF(for: document, from: modelContext)
@@ -113,6 +124,9 @@ struct ReaderView: View {
 private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
     @Environment(\.modelContext) private var modelContext
     let document: ScriptDocument
+    let notes: [ScriptNote]
+    let dialogueTurns: [ScriptDialogueTurn]
+    let dialogueHighlightSettings: PDFDialogueHighlightSettings
     @Binding var jumpToPage: Int?
     @Binding var searchHighlight: PDFSearchHighlight?
     let isAnnotating: Bool
@@ -135,6 +149,11 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 uiView.pdfView.document = loadedDocument
             }
 
+            context.coordinator.setNotes(notes)
+            context.coordinator.setDialogueHighlights(
+                turns: dialogueTurns,
+                settings: dialogueHighlightSettings
+            )
             if let target = jumpToPage,
                let page = uiView.pdfView.document?.page(at: target) {
                 context.coordinator.persistCurrentCanvasIfNeeded()
@@ -174,7 +193,13 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         private var loadedFileModificationDate: Date?
         private var loadedPDFDocument: PDFDocument?
         private var pageChangedObserver: NSObjectProtocol?
-        private var pageOverlayViews: [Int: UIImageView] = [:]
+        private var pageOverlayViews: [Int: ReaderPageOverlayView] = [:]
+        private var notesByPage: [Int: [ScriptNote]] = [:]
+        private var dialogueTurnsByPage: [Int: [ScriptDialogueTurn]] = [:]
+        private var dialogueCharacters: [String] = []
+        private var dialogueHighlightSettings = PDFDialogueHighlightSettings()
+        private var dialogueHighlightRectCache: [Int: [CGRect]] = [:]
+        private var dialogueTurnsSignature = ""
         private var configuredCanvasIdentifier: ObjectIdentifier?
         private var lastClearTrigger = 0
         private var lastSearchHighlightID: PDFSearchHighlight.ID?
@@ -186,6 +211,9 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             if self.document?.id != document.id {
                 loadedPageIndex = 0
                 pageOverlayViews.removeAll()
+                notesByPage.removeAll()
+                dialogueTurnsByPage.removeAll()
+                dialogueHighlightRectCache.removeAll()
             }
             self.containerView = containerView
             self.document = document
@@ -194,6 +222,25 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             configureCanvasDefaultsIfNeeded(containerView.canvasView)
             containerView.pdfView.pageOverlayViewProvider = self
             installPageObserverIfNeeded(for: containerView.pdfView)
+        }
+
+        func setNotes(_ notes: [ScriptNote]) {
+            notesByPage = Dictionary(grouping: notes, by: \.pageIndex)
+            refreshVisibleNoteMarkers()
+        }
+
+        func setDialogueHighlights(turns: [ScriptDialogueTurn], settings: PDFDialogueHighlightSettings) {
+            let signature = turns.map { "\($0.sequenceIndex):\($0.pageIndex):\($0.characterName):\($0.dialogue.count)" }
+                .joined(separator: "|")
+            if signature != dialogueTurnsSignature {
+                dialogueTurnsSignature = signature
+                dialogueHighlightRectCache.removeAll()
+            }
+
+            dialogueHighlightSettings = settings
+            dialogueCharacters = Array(Set(turns.map(\.characterName))).sorted()
+            dialogueTurnsByPage = Dictionary(grouping: turns, by: \.pageIndex)
+            refreshVisibleNoteMarkers()
         }
 
         func pdfDocument(for document: ScriptDocument) throws -> PDFDocument {
@@ -214,6 +261,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             loadedFileModificationDate = modificationDate
             loadedPDFDocument = pdfDocument
             pageOverlayViews.removeAll()
+            dialogueHighlightRectCache.removeAll()
             return pdfDocument
         }
 
@@ -369,25 +417,49 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
 
         func pdfView(_ pdfView: PDFView, overlayViewFor page: PDFPage) -> UIView? {
             let pageIndex = pdfView.document?.index(for: page) ?? 0
-            let imageView = pageOverlayViews[pageIndex] ?? makeOverlayView(for: pageIndex, page: page)
-            imageView.image = overlayImage(for: pageIndex, page: page)
-            imageView.isHidden = !containerCanvasHiddenState()
-            return imageView
+            enableOverlayHitTesting(in: pdfView)
+            let overlayView = pageOverlayViews[pageIndex] ?? makeOverlayView(for: pageIndex, page: page)
+            overlayView.imageView.image = overlayImage(for: pageIndex, page: page)
+            overlayView.imageView.isHidden = !containerCanvasHiddenState()
+            overlayView.configure(
+                pageIndex: pageIndex,
+                notes: notesByPage[pageIndex] ?? [],
+                dialogueHighlights: dialogueHighlights(for: pageIndex, page: page),
+                onMoveNote: { [weak self] note, anchor in
+                    self?.moveNote(note, to: anchor)
+                },
+                onDeleteNote: { [weak self] note in
+                    self?.deleteNote(note)
+                }
+            )
+            return overlayView
+        }
+
+        func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlayView: UIView, for page: PDFPage) {
+            overlayView.isUserInteractionEnabled = true
+            enableOverlayHitTesting(in: pdfView)
         }
 
         func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
             guard let pageIndex = pdfView.document?.index(for: page) else { return }
-            pageOverlayViews[pageIndex]?.image = overlayImage(for: pageIndex, page: page)
+            pageOverlayViews[pageIndex]?.imageView.image = overlayImage(for: pageIndex, page: page)
         }
 
-        private func makeOverlayView(for pageIndex: Int, page: PDFPage) -> UIImageView {
-            let imageView = UIImageView()
-            imageView.backgroundColor = .clear
-            imageView.contentMode = .scaleToFill
-            imageView.isUserInteractionEnabled = false
-            imageView.image = overlayImage(for: pageIndex, page: page)
-            pageOverlayViews[pageIndex] = imageView
-            return imageView
+        private func enableOverlayHitTesting(in pdfView: PDFView) {
+            pdfView.documentView?.subviews.forEach { subview in
+                let className = String(describing: type(of: subview))
+                if className.contains("PDFPageView") {
+                    subview.isUserInteractionEnabled = true
+                }
+            }
+        }
+
+        private func makeOverlayView(for pageIndex: Int, page: PDFPage) -> ReaderPageOverlayView {
+            let overlayView = ReaderPageOverlayView()
+            overlayView.backgroundColor = .clear
+            overlayView.imageView.image = overlayImage(for: pageIndex, page: page)
+            pageOverlayViews[pageIndex] = overlayView
+            return overlayView
         }
 
         private func overlayImage(for pageIndex: Int, page: PDFPage) -> UIImage? {
@@ -401,9 +473,9 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 let page = pdfView.document?.page(at: pageIndex)
             else { return }
 
-            let imageView = pageOverlayViews[pageIndex] ?? makeOverlayView(for: pageIndex, page: page)
-            imageView.image = overlayImage(for: pageIndex, page: page)
-            imageView.isHidden = hidden
+            let overlayView = pageOverlayViews[pageIndex] ?? makeOverlayView(for: pageIndex, page: page)
+            overlayView.imageView.image = overlayImage(for: pageIndex, page: page)
+            overlayView.imageView.isHidden = hidden
         }
 
         private func refreshAllOverlays(hidden: Bool) {
@@ -418,6 +490,102 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
 
         private func containerCanvasHiddenState() -> Bool {
             containerView?.canvasView.isHidden ?? true
+        }
+
+        private func refreshVisibleNoteMarkers() {
+            for (pageIndex, overlayView) in pageOverlayViews {
+                let page = containerView?.pdfView.document?.page(at: pageIndex)
+                overlayView.configure(
+                    pageIndex: pageIndex,
+                    notes: notesByPage[pageIndex] ?? [],
+                    dialogueHighlights: page.map { dialogueHighlights(for: pageIndex, page: $0) } ?? [],
+                    onMoveNote: { [weak self] note, anchor in
+                        self?.moveNote(note, to: anchor)
+                    },
+                    onDeleteNote: { [weak self] note in
+                        self?.deleteNote(note)
+                    }
+                )
+            }
+        }
+
+        private func dialogueHighlights(for pageIndex: Int, page: PDFPage) -> [PDFDialoguePageHighlight] {
+            guard dialogueHighlightSettings.isEnabled, !dialogueHighlightSettings.isMuteAll else { return [] }
+
+            let turns = (dialogueTurnsByPage[pageIndex] ?? []).filter {
+                dialogueHighlightSettings.shouldShow(characterName: $0.characterName)
+            }
+
+            return turns.compactMap { turn in
+                let rects = dialogueRects(for: turn, page: page)
+                guard !rects.isEmpty else { return nil }
+
+                return PDFDialoguePageHighlight(
+                    id: turn.id,
+                    characterName: turn.characterName,
+                    pageBounds: page.bounds(for: .mediaBox),
+                    rects: rects,
+                    color: PDFDialogueHighlightPalette.uiColor(
+                        for: turn.characterName,
+                        allCharacters: dialogueCharacters,
+                        alpha: 0.24
+                    )
+                )
+            }
+        }
+
+        private func dialogueRects(for turn: ScriptDialogueTurn, page: PDFPage) -> [CGRect] {
+            if let cached = dialogueHighlightRectCache[turn.sequenceIndex] {
+                return cached
+            }
+
+            let candidates = dialogueSearchCandidates(for: turn)
+            for candidate in candidates {
+                if let selection = page.selection(forNormalizedQuery: candidate) {
+                    let rect = selection.bounds(for: page)
+                    guard rect.width > 2, rect.height > 2 else { continue }
+                    dialogueHighlightRectCache[turn.sequenceIndex] = [rect]
+                    return [rect]
+                }
+            }
+
+            dialogueHighlightRectCache[turn.sequenceIndex] = []
+            return []
+        }
+
+        private func dialogueSearchCandidates(for turn: ScriptDialogueTurn) -> [String] {
+            let dialogue = turn.dialogue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !dialogue.isEmpty else { return [] }
+
+            var candidates = [dialogue]
+
+            if let sentenceEnd = dialogue.firstIndex(where: { ".!?".contains($0) }) {
+                let firstSentence = String(dialogue[...sentenceEnd])
+                if firstSentence.count >= 16 {
+                    candidates.append(firstSentence)
+                }
+            }
+
+            let words = dialogue.split(separator: " ")
+            if words.count >= 5 {
+                candidates.append(words.prefix(10).joined(separator: " "))
+            }
+
+            return Array(NSOrderedSet(array: candidates).compactMap { $0 as? String })
+        }
+
+        private func moveNote(_ note: ScriptNote, to anchor: NotePageAnchor) {
+            note.rectString = anchor.storageString
+            note.updatedAt = Date()
+            try? modelContext?.save()
+        }
+
+        private func deleteNote(_ note: ScriptNote) {
+            let pageIndex = note.pageIndex
+            notesByPage[pageIndex]?.removeAll { $0.id == note.id }
+            modelContext?.delete(note)
+            try? modelContext?.save()
+            refreshVisibleNoteMarkers()
         }
 
         private func installPageObserverIfNeeded(for pdfView: PDFView) {
@@ -538,5 +706,409 @@ private final class EmbeddedReaderContainerView: UIView {
             canvasView.topAnchor.constraint(equalTo: topAnchor),
             canvasView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+}
+
+private extension PDFPage {
+    func selection(forNormalizedQuery query: String) -> PDFSelection? {
+        guard let pageText = string else { return nil }
+        let normalizedPage = NormalizedTextMap(source: pageText)
+        let normalizedQuery = query.normalizedForPDFSearch
+        guard !normalizedQuery.isEmpty,
+              let normalizedRange = normalizedPage.text.range(
+                of: normalizedQuery,
+                options: [.caseInsensitive, .diacriticInsensitive]
+              )
+        else { return nil }
+
+        let startOffset = normalizedPage.text.distance(
+            from: normalizedPage.text.startIndex,
+            to: normalizedRange.lowerBound
+        )
+        let endOffset = normalizedPage.text.distance(
+            from: normalizedPage.text.startIndex,
+            to: normalizedRange.upperBound
+        )
+
+        guard startOffset >= 0,
+              endOffset > startOffset,
+              startOffset < normalizedPage.sourceIndices.count,
+              endOffset - 1 < normalizedPage.sourceIndices.count
+        else { return nil }
+
+        let sourceStart = normalizedPage.sourceIndices[startOffset]
+        let sourceEnd = pageText.index(after: normalizedPage.sourceIndices[endOffset - 1])
+        let range = NSRange(sourceStart..<sourceEnd, in: pageText)
+        return selection(for: range)
+    }
+}
+
+private struct NormalizedTextMap {
+    let text: String
+    let sourceIndices: [String.Index]
+
+    init(source: String) {
+        var normalized = ""
+        var indices: [String.Index] = []
+        var previousWasWhitespace = true
+
+        var index = source.startIndex
+        while index < source.endIndex {
+            let character = source[index]
+
+            if character.isWhitespace {
+                if !previousWasWhitespace {
+                    normalized.append(" ")
+                    indices.append(index)
+                    previousWasWhitespace = true
+                }
+            } else {
+                normalized.append(character)
+                indices.append(index)
+                previousWasWhitespace = false
+            }
+
+            index = source.index(after: index)
+        }
+
+        while normalized.last == " " {
+            normalized.removeLast()
+            indices.removeLast()
+        }
+
+        self.text = normalized
+        self.sourceIndices = indices
+    }
+}
+
+private extension String {
+    var normalizedForPDFSearch: String {
+        split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+}
+
+private struct NotePageAnchor {
+    var x: CGFloat
+    var y: CGFloat
+
+    var storageString: String {
+        String(format: "%.3f,%.3f", Double(x), Double(y))
+    }
+
+    static func parse(_ string: String?) -> NotePageAnchor? {
+        guard let string else { return nil }
+        let parts = string.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2 else { return nil }
+        return NotePageAnchor(
+            x: CGFloat(parts[0]).clamped(to: 0...1),
+            y: CGFloat(parts[1]).clamped(to: 0...1)
+        )
+    }
+
+    static func fallback(for index: Int) -> NotePageAnchor {
+        NotePageAnchor(x: 0.88, y: min(0.14 + CGFloat(index % 6) * 0.08, 0.58))
+    }
+}
+
+private struct PDFDialoguePageHighlight: Identifiable {
+    let id: UUID
+    let characterName: String
+    let pageBounds: CGRect
+    let rects: [CGRect]
+    let color: UIColor
+}
+
+private final class ReaderPageOverlayView: UIView {
+    let imageView = UIImageView()
+    private let dialogueHighlightView = PDFDialogueHighlightView()
+    private var markerViews: [UUID: NoteMarkerView] = [:]
+    private var noteIDs: [UUID] = []
+    private var markerAnchors: [UUID: NotePageAnchor] = [:]
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    func configure(
+        pageIndex: Int,
+        notes: [ScriptNote],
+        dialogueHighlights: [PDFDialoguePageHighlight],
+        onMoveNote: @escaping (ScriptNote, NotePageAnchor) -> Void,
+        onDeleteNote: @escaping (ScriptNote) -> Void
+    ) {
+        dialogueHighlightView.highlights = dialogueHighlights
+
+        let currentIDs = Set(notes.map(\.id))
+        let removedIDs = markerViews.keys.filter { !currentIDs.contains($0) }
+        for id in removedIDs {
+            guard let markerView = markerViews[id] else { continue }
+            markerView.removeFromSuperview()
+            markerViews[id] = nil
+            markerAnchors[id] = nil
+        }
+
+        noteIDs = notes.map(\.id)
+        for (index, note) in notes.enumerated() {
+            let anchor = NotePageAnchor.parse(note.rectString) ?? .fallback(for: index)
+            markerAnchors[note.id] = anchor
+
+            let markerView = markerViews[note.id] ?? NoteMarkerView()
+            if markerViews[note.id] == nil {
+                addSubview(markerView)
+                markerViews[note.id] = markerView
+            }
+
+            markerView.configure(
+                note: note,
+                pageNumber: pageIndex + 1,
+                anchor: anchor,
+                onMove: { [weak self, weak note] newAnchor in
+                    guard let self, let note else { return }
+                    self.markerAnchors[note.id] = newAnchor
+                    onMoveNote(note, newAnchor)
+                    self.setNeedsLayout()
+                },
+                onDelete: { [weak note] in
+                    guard let note else { return }
+                    onDeleteNote(note)
+                }
+            )
+        }
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        dialogueHighlightView.frame = bounds
+        imageView.frame = bounds
+
+        for id in noteIDs {
+            guard let markerView = markerViews[id],
+                  let anchor = markerAnchors[id] else { continue }
+            let size = markerView.intrinsicContentSize
+            markerView.frame = CGRect(
+                x: bounds.width * anchor.x - size.width / 2,
+                y: bounds.height * anchor.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+        }
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+
+        for subview in subviews.reversed() where subview !== imageView && subview !== dialogueHighlightView {
+            guard subview.isUserInteractionEnabled, !subview.isHidden, subview.alpha > 0.01 else { continue }
+            let convertedPoint = subview.convert(point, from: self)
+            if let hitView = subview.hitTest(convertedPoint, with: event) {
+                return hitView
+            }
+        }
+
+        return nil
+    }
+
+    private func setup() {
+        dialogueHighlightView.backgroundColor = .clear
+        dialogueHighlightView.isUserInteractionEnabled = false
+        addSubview(dialogueHighlightView)
+
+        imageView.backgroundColor = .clear
+        imageView.contentMode = .scaleToFill
+        imageView.isUserInteractionEnabled = false
+        addSubview(imageView)
+        isUserInteractionEnabled = true
+    }
+}
+
+private final class PDFDialogueHighlightView: UIView {
+    var highlights: [PDFDialoguePageHighlight] = [] {
+        didSet { setNeedsDisplay() }
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+
+        for highlight in highlights {
+            context.setFillColor(highlight.color.cgColor)
+
+            for pageRect in highlight.rects {
+                let overlayRect = overlayRect(for: pageRect, pageBounds: highlight.pageBounds)
+                    .insetBy(dx: -4, dy: -3)
+                UIBezierPath(roundedRect: overlayRect, cornerRadius: 4).fill()
+            }
+        }
+    }
+
+    private func overlayRect(for pageRect: CGRect, pageBounds: CGRect) -> CGRect {
+        guard pageBounds.width > 0, pageBounds.height > 0 else { return .zero }
+
+        let scaleX = bounds.width / pageBounds.width
+        let scaleY = bounds.height / pageBounds.height
+        let x = (pageRect.minX - pageBounds.minX) * scaleX
+        let y = (pageBounds.maxY - pageRect.maxY) * scaleY
+
+        return CGRect(
+            x: x,
+            y: y,
+            width: pageRect.width * scaleX,
+            height: pageRect.height * scaleY
+        )
+    }
+}
+
+private final class NoteMarkerView: UIControl, UIGestureRecognizerDelegate {
+    private let iconView = UIImageView(image: UIImage(systemName: "note.text"))
+    private let pageLabel = UILabel()
+    private var note: ScriptNote?
+    private var onMove: ((NotePageAnchor) -> Void)?
+    private var onDelete: (() -> Void)?
+    private var dragStartCenter: CGPoint = .zero
+    private weak var activeScrollView: UIScrollView?
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: 58, height: 34)
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    func configure(
+        note: ScriptNote,
+        pageNumber: Int,
+        anchor: NotePageAnchor,
+        onMove: @escaping (NotePageAnchor) -> Void,
+        onDelete: @escaping () -> Void
+    ) {
+        self.note = note
+        self.onMove = onMove
+        self.onDelete = onDelete
+        pageLabel.text = "p\(pageNumber)"
+        accessibilityLabel = "Note on page \(pageNumber)"
+        accessibilityHint = "Drag to move this note marker. Long press to delete it."
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        iconView.frame = CGRect(x: 10, y: 7, width: 20, height: 20)
+        pageLabel.frame = CGRect(x: 32, y: 0, width: bounds.width - 38, height: bounds.height)
+    }
+
+    private func setup() {
+        backgroundColor = UIColor.systemOrange.withAlphaComponent(0.92)
+        isExclusiveTouch = true
+        layer.cornerRadius = 13
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.18
+        layer.shadowRadius = 4
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+
+        iconView.tintColor = .white
+        iconView.contentMode = .scaleAspectFit
+        addSubview(iconView)
+
+        pageLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        pageLabel.textColor = .white
+        addSubview(pageLabel)
+
+        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        panGesture.cancelsTouchesInView = true
+        panGesture.delegate = self
+        addGestureRecognizer(panGesture)
+
+        addInteraction(UIContextMenuInteraction(delegate: self))
+    }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        guard let container = superview else { return }
+
+        switch recognizer.state {
+        case .began:
+            dragStartCenter = center
+            activeScrollView = nearestScrollView()
+            activeScrollView?.panGestureRecognizer.isEnabled = false
+        case .changed, .ended:
+            let translation = recognizer.translation(in: container)
+            let halfWidth = bounds.width / 2
+            let halfHeight = bounds.height / 2
+            let newCenter = CGPoint(
+                x: (dragStartCenter.x + translation.x).clamped(to: halfWidth...(container.bounds.width - halfWidth)),
+                y: (dragStartCenter.y + translation.y).clamped(to: halfHeight...(container.bounds.height - halfHeight))
+            )
+            center = newCenter
+
+            if recognizer.state == .ended {
+                onMove?(
+                    NotePageAnchor(
+                        x: (newCenter.x / max(container.bounds.width, 1)).clamped(to: 0...1),
+                        y: (newCenter.y / max(container.bounds.height, 1)).clamped(to: 0...1)
+                    )
+                )
+            }
+            if recognizer.state == .ended {
+                activeScrollView?.panGestureRecognizer.isEnabled = true
+                activeScrollView = nil
+            }
+        case .cancelled, .failed:
+            activeScrollView?.panGestureRecognizer.isEnabled = true
+            activeScrollView = nil
+        default:
+            break
+        }
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        false
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            UIMenu(children: [
+                UIAction(
+                    title: "Delete Note",
+                    image: UIImage(systemName: "trash"),
+                    attributes: .destructive
+                ) { _ in
+                    self?.onDelete?()
+                }
+            ])
+        }
+    }
+
+    private func nearestScrollView() -> UIScrollView? {
+        var candidate = superview
+        while let view = candidate {
+            if let scrollView = view as? UIScrollView {
+                return scrollView
+            }
+            candidate = view.superview
+        }
+        return nil
+    }
+}
+
+private extension Comparable {
+    func clamped(to limits: ClosedRange<Self>) -> Self {
+        min(max(self, limits.lowerBound), limits.upperBound)
     }
 }
