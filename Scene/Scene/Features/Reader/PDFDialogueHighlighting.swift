@@ -5,8 +5,22 @@ struct PDFDialogueHighlightSettings: Equatable {
     var isEnabled = false
     var mutedCharacters: Set<String> = []
     var isMuteAll = false
+    var activeTurnSequenceIndex: Int?
+    var isActiveTurnOnly = false
 
-    func shouldShow(characterName: String) -> Bool {
+    func shouldShow(turn: ScriptDialogueTurn) -> Bool {
+        if isActiveTurnOnly {
+            return isEnabled && turn.sequenceIndex == activeTurnSequenceIndex
+        }
+
+        if let activeTurnSequenceIndex {
+            return isEnabled && turn.sequenceIndex == activeTurnSequenceIndex
+        }
+
+        return shouldShow(characterName: turn.characterName)
+    }
+
+    private func shouldShow(characterName: String) -> Bool {
         isEnabled && !isMuteAll && !mutedCharacters.contains(characterName)
     }
 }

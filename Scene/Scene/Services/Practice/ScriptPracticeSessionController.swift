@@ -5,7 +5,9 @@ import Foundation
 @MainActor
 final class ScriptPracticeSessionController: NSObject, ObservableObject {
     @Published private(set) var currentTurn: ScriptDialogueTurn?
+    @Published private(set) var spokenTurn: ScriptDialogueTurn?
     @Published private(set) var isPlaying = false
+    @Published private(set) var isPaused = false
     @Published private(set) var statusText = "Ready to rehearse"
     @Published private(set) var ttsUnavailable = false
 
@@ -13,6 +15,7 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
     private var playbackTask: Task<Void, Never>?
     private var speechContinuation: CheckedContinuation<Void, Never>?
     private var speechRate: Float = AVSpeechUtteranceDefaultSpeechRate
+    private var skipToken = 0
 
     override init() {
         super.init()
@@ -25,7 +28,10 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
         responseWindow: TimeInterval,
         betweenTurnsPause: TimeInterval,
         speakSelectedCharacter: Bool,
-        speechRate: Float = AVSpeechUtteranceDefaultSpeechRate
+        speechRate: Float = AVSpeechUtteranceDefaultSpeechRate,
+        speakOtherCharacters: Bool = true,
+        skippedTurnPause: TimeInterval = 0,
+        showSkippedTurns: Bool = true
     ) {
         stop()
         self.speechRate = speechRate.clamped(to: AVSpeechUtteranceMinimumSpeechRate...AVSpeechUtteranceMaximumSpeechRate)
@@ -33,10 +39,12 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
         guard !selectedCharacter.isEmpty, !turns.isEmpty else {
             statusText = "No dialogue available"
             currentTurn = nil
+            spokenTurn = nil
             return
         }
 
         isPlaying = true
+        isPaused = false
         statusText = "Starting rehearsal"
         playbackTask = Task {
             await runPlayback(
@@ -44,12 +52,16 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
                 selectedCharacter: selectedCharacter,
                 responseWindow: responseWindow,
                 betweenTurnsPause: betweenTurnsPause,
-                speakSelectedCharacter: speakSelectedCharacter
+                speakSelectedCharacter: speakSelectedCharacter,
+                speakOtherCharacters: speakOtherCharacters,
+                skippedTurnPause: skippedTurnPause,
+                showSkippedTurns: showSkippedTurns
             )
         }
     }
 
     func stop() {
+        skipToken += 1
         playbackTask?.cancel()
         playbackTask = nil
 
@@ -65,7 +77,42 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
         }
 
         isPlaying = false
+        isPaused = false
+        currentTurn = nil
+        spokenTurn = nil
         statusText = "Rehearsal paused"
+    }
+
+    func pause() {
+        guard isPlaying, !isPaused else { return }
+        isPaused = true
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.pauseSpeaking(at: .word)
+        }
+        statusText = "Paused"
+    }
+
+    func resume() {
+        guard isPlaying, isPaused else { return }
+        isPaused = false
+        if speechSynthesizer.isPaused {
+            speechSynthesizer.continueSpeaking()
+        }
+        statusText = currentTurn?.characterName ?? "Reading"
+    }
+
+    func skipCurrentTurn() {
+        guard isPlaying else { return }
+        skipToken += 1
+        if speechSynthesizer.isSpeaking || speechSynthesizer.isPaused {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+        isPaused = false
+        statusText = "Skipping"
+    }
+
+    func updateSpeechRate(_ speechRate: Float) {
+        self.speechRate = speechRate.clamped(to: AVSpeechUtteranceMinimumSpeechRate...AVSpeechUtteranceMaximumSpeechRate)
     }
 
     private func runPlayback(
@@ -73,39 +120,53 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
         selectedCharacter: String,
         responseWindow: TimeInterval,
         betweenTurnsPause: TimeInterval,
-        speakSelectedCharacter: Bool
+        speakSelectedCharacter: Bool,
+        speakOtherCharacters: Bool,
+        skippedTurnPause: TimeInterval,
+        showSkippedTurns: Bool
     ) async {
         await configureAudioSession()
 
         for turn in turns {
             if Task.isCancelled { return }
 
-            currentTurn = turn
+            let isSelectedCharacter = turn.characterName == selectedCharacter
+            let shouldSpeak = isSelectedCharacter ? speakSelectedCharacter : speakOtherCharacters
+            currentTurn = shouldSpeak || showSkippedTurns ? turn : nil
 
-            if turn.characterName == selectedCharacter {
+            if isSelectedCharacter {
                 statusText = "Your line"
 
                 if responseWindow > 0 {
-                    try? await Task.sleep(nanoseconds: nanoseconds(from: responseWindow))
+                    await sleepRespectingPause(seconds: responseWindow)
                 }
 
                 if speakSelectedCharacter {
                     await speak(turn: turn, isSelectedCharacter: true)
+                } else if skippedTurnPause > 0 {
+                    await sleepRespectingPause(seconds: skippedTurnPause)
                 }
             } else {
                 statusText = turn.characterName
-                await speak(turn: turn, isSelectedCharacter: false)
+                if speakOtherCharacters {
+                    await speak(turn: turn, isSelectedCharacter: false)
+                } else if skippedTurnPause > 0 {
+                    await sleepRespectingPause(seconds: skippedTurnPause)
+                }
             }
 
             if Task.isCancelled { return }
 
             let pauseAfterTurn = max(betweenTurnsPause, turn.suggestedPauseAfter ?? 0)
             if pauseAfterTurn > 0 {
-                try? await Task.sleep(nanoseconds: nanoseconds(from: pauseAfterTurn))
+                await sleepRespectingPause(seconds: pauseAfterTurn)
             }
         }
 
         isPlaying = false
+        isPaused = false
+        currentTurn = nil
+        spokenTurn = nil
         statusText = "Rehearsal complete"
     }
 
@@ -145,12 +206,32 @@ final class ScriptPracticeSessionController: NSObject, ObservableObject {
 
         await withCheckedContinuation { continuation in
             speechContinuation = continuation
+            spokenTurn = turn
             speechSynthesizer.speak(utterance)
         }
+        spokenTurn = nil
     }
 
     private func nanoseconds(from seconds: TimeInterval) -> UInt64 {
         UInt64(max(seconds, 0) * 1_000_000_000)
+    }
+
+    private func sleepRespectingPause(seconds: TimeInterval) async {
+        let startingSkipToken = skipToken
+        var remaining = max(seconds, 0)
+
+        while remaining > 0 {
+            if Task.isCancelled || skipToken != startingSkipToken { return }
+
+            if isPaused {
+                try? await Task.sleep(nanoseconds: nanoseconds(from: 0.1))
+                continue
+            }
+
+            let slice = min(remaining, 0.1)
+            try? await Task.sleep(nanoseconds: nanoseconds(from: slice))
+            remaining -= slice
+        }
     }
 }
 
@@ -163,6 +244,7 @@ private extension Float {
 extension ScriptPracticeSessionController: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            spokenTurn = nil
             speechContinuation?.resume()
             speechContinuation = nil
         }
@@ -170,6 +252,7 @@ extension ScriptPracticeSessionController: AVSpeechSynthesizerDelegate {
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            spokenTurn = nil
             speechContinuation?.resume()
             speechContinuation = nil
         }

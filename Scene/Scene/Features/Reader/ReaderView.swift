@@ -510,10 +510,12 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         }
 
         private func dialogueHighlights(for pageIndex: Int, page: PDFPage) -> [PDFDialoguePageHighlight] {
-            guard dialogueHighlightSettings.isEnabled, !dialogueHighlightSettings.isMuteAll else { return [] }
+            guard dialogueHighlightSettings.isEnabled,
+                  dialogueHighlightSettings.activeTurnSequenceIndex != nil || !dialogueHighlightSettings.isMuteAll
+            else { return [] }
 
             let turns = (dialogueTurnsByPage[pageIndex] ?? []).filter {
-                dialogueHighlightSettings.shouldShow(characterName: $0.characterName)
+                dialogueHighlightSettings.shouldShow(turn: $0)
             }
 
             return turns.compactMap { turn in
@@ -539,14 +541,25 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 return cached
             }
 
-            let candidates = dialogueSearchCandidates(for: turn)
-            for candidate in candidates {
-                if let selection = page.selection(forNormalizedQuery: candidate) {
-                    let rect = selection.bounds(for: page)
-                    guard rect.width > 2, rect.height > 2 else { continue }
-                    dialogueHighlightRectCache[turn.sequenceIndex] = [rect]
-                    return [rect]
+            let dialogue = turn.dialogue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let selection = page.selection(forNormalizedQuery: dialogue) {
+                let rects = mergedDialogueRects(selection.highlightLineRects(for: page))
+                if !rects.isEmpty {
+                    dialogueHighlightRectCache[turn.sequenceIndex] = rects
+                    return rects
                 }
+            }
+
+            var rects: [CGRect] = []
+            for candidate in dialogueSearchCandidates(for: turn) {
+                guard let selection = page.selection(forNormalizedQuery: candidate) else { continue }
+                rects.append(contentsOf: selection.highlightLineRects(for: page))
+            }
+
+            rects = mergedDialogueRects(rects)
+            if !rects.isEmpty {
+                dialogueHighlightRectCache[turn.sequenceIndex] = rects
+                return rects
             }
 
             dialogueHighlightRectCache[turn.sequenceIndex] = []
@@ -557,7 +570,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             let dialogue = turn.dialogue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !dialogue.isEmpty else { return [] }
 
-            var candidates = [dialogue]
+            var candidates: [String] = []
 
             if let sentenceEnd = dialogue.firstIndex(where: { ".!?".contains($0) }) {
                 let firstSentence = String(dialogue[...sentenceEnd])
@@ -567,11 +580,57 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
             }
 
             let words = dialogue.split(separator: " ")
-            if words.count >= 5 {
-                candidates.append(words.prefix(10).joined(separator: " "))
+            if words.count >= 4 {
+                let chunkSize = 12
+                let step = 10
+                var index = 0
+
+                while index < words.count {
+                    let end = min(index + chunkSize, words.count)
+                    let chunk = words[index..<end].joined(separator: " ")
+                    if chunk.count >= 16 {
+                        candidates.append(chunk)
+                    }
+
+                    if end == words.count { break }
+                    index += step
+                }
+
+                if words.count > chunkSize {
+                    let tail = words.suffix(min(chunkSize, words.count)).joined(separator: " ")
+                    candidates.append(tail)
+                }
             }
 
             return Array(NSOrderedSet(array: candidates).compactMap { $0 as? String })
+        }
+
+        private func mergedDialogueRects(_ rects: [CGRect]) -> [CGRect] {
+            let validRects = rects
+                .filter { $0.width > 2 && $0.height > 2 }
+                .sorted {
+                    if abs($0.midY - $1.midY) > 3 {
+                        return $0.midY > $1.midY
+                    }
+                    return $0.minX < $1.minX
+                }
+
+            return validRects.reduce(into: [CGRect]()) { merged, rect in
+                guard let last = merged.last else {
+                    merged.append(rect)
+                    return
+                }
+
+                let verticalOverlap = min(last.maxY, rect.maxY) - max(last.minY, rect.minY)
+                let sameLine = verticalOverlap >= min(last.height, rect.height) * 0.45
+                let closeEnough = rect.minX <= last.maxX + 18
+
+                if sameLine && closeEnough {
+                    merged[merged.count - 1] = last.union(rect)
+                } else {
+                    merged.append(rect)
+                }
+            }
         }
 
         private func moveNote(_ note: ScriptNote, to anchor: NotePageAnchor) {
@@ -740,6 +799,19 @@ private extension PDFPage {
         let sourceEnd = pageText.index(after: normalizedPage.sourceIndices[endOffset - 1])
         let range = NSRange(sourceStart..<sourceEnd, in: pageText)
         return selection(for: range)
+    }
+}
+
+private extension PDFSelection {
+    func highlightLineRects(for page: PDFPage) -> [CGRect] {
+        let lineSelections = selectionsByLine()
+        let rects = lineSelections.map { $0.bounds(for: page) }
+
+        if rects.contains(where: { $0.width > 2 && $0.height > 2 }) {
+            return rects
+        }
+
+        return [bounds(for: page)]
     }
 }
 
