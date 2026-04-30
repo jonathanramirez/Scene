@@ -197,7 +197,6 @@ struct ReaderSplitView: View {
                     onAdjustPause: { pdfReadingController.adjustCurrentPause(by: $0) },
                     onSelectPauseMultiplier: setPDFPauseLengthMultiplier,
                     onToggleStartSelection: togglePDFStartSelectionMode,
-                    onStop: stopPDFReadingVoiceOver,
                     onClose: closePDFReadingPlayer,
                     onSelectRate: setPDFReadingRateMultiplier
                 )
@@ -437,7 +436,7 @@ struct ReaderSplitView: View {
     private func togglePDFReadingPause() {
         if pdfReadingController.isPaused {
             pdfReadingController.resume()
-        } else {
+        } else if pdfReadingController.isPlaying {
             pdfReadingController.pause()
         }
     }
@@ -869,7 +868,6 @@ private struct PDFReadingPlayerOverlay: View {
     let onAdjustPause: (Double) -> Void
     let onSelectPauseMultiplier: (Double) -> Void
     let onToggleStartSelection: () -> Void
-    let onStop: () -> Void
     let onClose: () -> Void
     let onSelectRate: (Double) -> Void
 
@@ -887,129 +885,189 @@ private struct PDFReadingPlayerOverlay: View {
     ]
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(characterName ?? status)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if let countdownText {
-                    Text(countdownText)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(isNextPage ? .orange : .secondary)
-                        .lineLimit(1)
-                } else if isSelectingStart {
-                    Text("Tap a highlighted paragraph to start there")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.blue)
-                        .lineLimit(1)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 14) {
+            statusCluster
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if pauseRemainingSeconds != nil {
-                Button {
-                    onAdjustPause(-0.75)
-                } label: {
-                    Image(systemName: "minus")
-                        .frame(width: 28, height: 34)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Shorten pause")
-
-                Button {
-                    onAdjustPause(0.75)
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 28, height: 34)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Lengthen pause")
+                pauseNudgeControls
             }
 
-            Button(action: onToggleStartSelection) {
-                Image(systemName: isSelectingStart ? "scope" : "scope")
-                    .foregroundStyle(isSelectingStart ? .blue : .primary)
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Choose start paragraph")
+            controlGroup {
+                playerButton(
+                    systemName: "scope",
+                    accessibilityLabel: "Choose start paragraph",
+                    isActive: isSelectingStart,
+                    action: onToggleStartSelection
+                )
 
-            Button(action: onTogglePause) {
-                Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel(isPaused ? "Resume" : "Pause")
+                playerButton(
+                    systemName: isPaused ? "play.fill" : "pause.fill",
+                    accessibilityLabel: isPaused ? "Resume" : "Pause",
+                    isProminent: true,
+                    action: onTogglePause
+                )
 
-            Button(action: onSkip) {
-                Image(systemName: "forward.end.fill")
-                    .frame(width: 34, height: 34)
+                playerButton(
+                    systemName: "forward.end.fill",
+                    accessibilityLabel: "Next line",
+                    action: onSkip
+                )
             }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Next line")
 
-            Menu {
-                ForEach(rates, id: \.value) { rate in
-                    Button {
-                        onSelectRate(rate.value)
-                    } label: {
-                        if selectedRate == rate.value {
-                            Label(rate.label, systemImage: "checkmark")
-                        } else {
-                            Text(rate.label)
-                        }
-                    }
-                }
-            } label: {
-                Text(selectedRateLabel)
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 42, height: 34)
+            controlGroup {
+                speedMenu
+                pauseMenu
             }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Playback speed")
 
-            Menu {
-                ForEach(pauseRates, id: \.value) { rate in
-                    Button {
-                        onSelectPauseMultiplier(rate.value)
-                    } label: {
-                        if selectedPauseRate == rate.value {
-                            Label(rate.label, systemImage: "checkmark")
-                        } else {
-                            Text(rate.label)
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "timer")
-                    .frame(width: 34, height: 34)
+            controlGroup {
+                playerButton(
+                    systemName: "xmark",
+                    accessibilityLabel: "Close player",
+                    tint: .secondary,
+                    action: onClose
+                )
             }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Pause length")
-
-            Button(role: .destructive, action: onStop) {
-                Image(systemName: "stop.fill")
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Stop voice over")
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Close player")
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 8)
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(.white.opacity(0.48), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 22, x: 0, y: 12)
+    }
+
+    private var statusCluster: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(characterName ?? "Voice Over")
+                    .font(.subheadline.weight(.bold))
+                    .lineLimit(1)
+
+                if isSelectingStart {
+                    Label("Pick start", systemImage: "scope")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.blue.opacity(0.12), in: Capsule())
+                }
+            }
+
+            Text(statusDetailText)
+                .font(.caption)
+                .foregroundStyle(statusDetailColor)
+                .lineLimit(1)
+        }
+    }
+
+    private var pauseNudgeControls: some View {
+        HStack(spacing: 6) {
+            playerButton(
+                systemName: "minus",
+                accessibilityLabel: "Shorten pause",
+                size: 34,
+                action: { onAdjustPause(-0.75) }
+            )
+
+            playerButton(
+                systemName: "plus",
+                accessibilityLabel: "Lengthen pause",
+                size: 34,
+                action: { onAdjustPause(0.75) }
+            )
+        }
+        .padding(5)
+        .background(.thinMaterial, in: Capsule())
+    }
+
+    private var speedMenu: some View {
+        Menu {
+            ForEach(rates, id: \.value) { rate in
+                Button {
+                    onSelectRate(rate.value)
+                } label: {
+                    if selectedRate == rate.value {
+                        Label(rate.label, systemImage: "checkmark")
+                    } else {
+                        Text(rate.label)
+                    }
+                }
+            }
+        } label: {
+            Text(selectedRateLabel)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.blue)
+                .frame(width: 44, height: 40)
+                .background(.blue.opacity(0.10), in: Capsule())
+        }
+        .accessibilityLabel("Playback speed")
+    }
+
+    private var pauseMenu: some View {
+        Menu {
+            ForEach(pauseRates, id: \.value) { rate in
+                Button {
+                    onSelectPauseMultiplier(rate.value)
+                } label: {
+                    if selectedPauseRate == rate.value {
+                        Label(rate.label, systemImage: "checkmark")
+                    } else {
+                        Text(rate.label)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "timer")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.blue)
+                .frame(width: 40, height: 40)
+                .background(.blue.opacity(0.10), in: Circle())
+        }
+        .accessibilityLabel("Pause length")
+    }
+
+    private func controlGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            content()
+        }
+        .padding(6)
+        .background(.thinMaterial, in: Capsule())
+    }
+
+    private func playerButton(
+        systemName: String,
+        accessibilityLabel: String,
+        size: CGFloat = 40,
+        tint: Color = .blue,
+        isActive: Bool = false,
+        isProminent: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: isProminent ? 18 : 17, weight: .semibold))
+                .foregroundStyle(buttonForeground(tint: tint, isActive: isActive, isProminent: isProminent))
+                .frame(width: size, height: size)
+                .background(buttonBackground(tint: tint, isActive: isActive, isProminent: isProminent), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func buttonForeground(tint: Color, isActive: Bool, isProminent: Bool) -> Color {
+        if isProminent { return .white }
+        if isActive { return tint }
+        return tint
+    }
+
+    private func buttonBackground(tint: Color, isActive: Bool, isProminent: Bool) -> Color {
+        if isProminent { return tint }
+        if isActive { return tint.opacity(0.16) }
+        return Color(.secondarySystemBackground)
     }
 
     private var selectedRate: Double {
@@ -1022,6 +1080,26 @@ private struct PDFReadingPlayerOverlay: View {
 
     private var selectedPauseRate: Double {
         pauseRates.min(by: { abs($0.value - pauseMultiplier) < abs($1.value - pauseMultiplier) })?.value ?? 1
+    }
+
+    private var statusDetailText: String {
+        if let countdownText {
+            return countdownText
+        }
+
+        if isSelectingStart {
+            return "Tap highlighted text to start there"
+        }
+
+        return status
+    }
+
+    private var statusDetailColor: Color {
+        if countdownText != nil {
+            return isNextPage ? .orange : .secondary
+        }
+
+        return isSelectingStart ? .blue : .secondary
     }
 
     private var countdownText: String? {
