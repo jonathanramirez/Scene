@@ -21,6 +21,7 @@ struct ReaderView: View {
     @State private var exportURL: URL?
     @State private var exportErrorMessage: String?
     var onPageChanged: ((Int) -> Void)?
+    var onDialogueTurnSelected: ((ScriptDialogueTurn) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,7 +35,8 @@ struct ReaderView: View {
                 isAnnotating: isAnnotating,
                 isPencilOnly: isPencilOnly,
                 clearCurrentPageTrigger: clearCurrentPageTrigger,
-                onPageChanged: onPageChanged
+                onPageChanged: onPageChanged,
+                onDialogueTurnSelected: onDialogueTurnSelected
             )
             .ignoresSafeArea(edges: .bottom)
         }
@@ -133,6 +135,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
     let isPencilOnly: Bool
     let clearCurrentPageTrigger: Int
     var onPageChanged: ((Int) -> Void)?
+    var onDialogueTurnSelected: ((ScriptDialogueTurn) -> Void)?
 
     func makeUIView(context: Context) -> EmbeddedReaderContainerView {
         let view = EmbeddedReaderContainerView()
@@ -154,6 +157,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 turns: dialogueTurns,
                 settings: dialogueHighlightSettings
             )
+            context.coordinator.onDialogueTurnSelected = onDialogueTurnSelected
             if let target = jumpToPage,
                let page = uiView.pdfView.document?.page(at: target) {
                 context.coordinator.persistCurrentCanvasIfNeeded()
@@ -206,6 +210,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
         private let toolPicker = PKToolPicker()
         private var isToolPickerObserving = false
         var onPageChanged: ((Int) -> Void)?
+        var onDialogueTurnSelected: ((ScriptDialogueTurn) -> Void)?
 
         func configure(containerView: EmbeddedReaderContainerView, document: ScriptDocument, modelContext: ModelContext) {
             if self.document?.id != document.id {
@@ -430,6 +435,12 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                 },
                 onDeleteNote: { [weak self] note in
                     self?.deleteNote(note)
+                },
+                onSelectHighlight: { [weak self] sequenceIndex in
+                    guard let self,
+                          let turn = self.dialogueTurnsByPage[pageIndex]?.first(where: { $0.sequenceIndex == sequenceIndex })
+                    else { return }
+                    self.onDialogueTurnSelected?(turn)
                 }
             )
             return overlayView
@@ -504,6 +515,12 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
                     },
                     onDeleteNote: { [weak self] note in
                         self?.deleteNote(note)
+                    },
+                    onSelectHighlight: { [weak self] sequenceIndex in
+                        guard let self,
+                              let turn = self.dialogueTurnsByPage[pageIndex]?.first(where: { $0.sequenceIndex == sequenceIndex })
+                        else { return }
+                        self.onDialogueTurnSelected?(turn)
                     }
                 )
             }
@@ -524,6 +541,7 @@ private struct EmbeddedPDFKitRepresentedView: UIViewRepresentable {
 
                 return PDFDialoguePageHighlight(
                     id: turn.id,
+                    sequenceIndex: turn.sequenceIndex,
                     characterName: turn.characterName,
                     pageBounds: page.bounds(for: .mediaBox),
                     rects: rects,
@@ -884,6 +902,7 @@ private struct NotePageAnchor {
 
 private struct PDFDialoguePageHighlight: Identifiable {
     let id: UUID
+    let sequenceIndex: Int
     let characterName: String
     let pageBounds: CGRect
     let rects: [CGRect]
@@ -896,6 +915,8 @@ private final class ReaderPageOverlayView: UIView {
     private var markerViews: [UUID: NoteMarkerView] = [:]
     private var noteIDs: [UUID] = []
     private var markerAnchors: [UUID: NotePageAnchor] = [:]
+    private var dialogueHighlights: [PDFDialoguePageHighlight] = []
+    private var onSelectHighlight: ((Int) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -912,8 +933,11 @@ private final class ReaderPageOverlayView: UIView {
         notes: [ScriptNote],
         dialogueHighlights: [PDFDialoguePageHighlight],
         onMoveNote: @escaping (ScriptNote, NotePageAnchor) -> Void,
-        onDeleteNote: @escaping (ScriptNote) -> Void
+        onDeleteNote: @escaping (ScriptNote) -> Void,
+        onSelectHighlight: @escaping (Int) -> Void
     ) {
+        self.dialogueHighlights = dialogueHighlights
+        self.onSelectHighlight = onSelectHighlight
         dialogueHighlightView.highlights = dialogueHighlights
 
         let currentIDs = Set(notes.map(\.id))
@@ -984,6 +1008,10 @@ private final class ReaderPageOverlayView: UIView {
             }
         }
 
+        if highlightedSequenceIndex(at: point) != nil {
+            return self
+        }
+
         return nil
     }
 
@@ -997,6 +1025,45 @@ private final class ReaderPageOverlayView: UIView {
         imageView.isUserInteractionEnabled = false
         addSubview(imageView)
         isUserInteractionEnabled = true
+
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        addGestureRecognizer(tapGesture)
+    }
+
+    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        let point = recognizer.location(in: self)
+        guard let sequenceIndex = highlightedSequenceIndex(at: point) else { return }
+        onSelectHighlight?(sequenceIndex)
+    }
+
+    private func highlightedSequenceIndex(at point: CGPoint) -> Int? {
+        for highlight in dialogueHighlights.reversed() {
+            for pageRect in highlight.rects {
+                let overlayRect = overlayRect(for: pageRect, pageBounds: highlight.pageBounds)
+                    .insetBy(dx: -10, dy: -8)
+                if overlayRect.contains(point) {
+                    return highlight.sequenceIndex
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func overlayRect(for pageRect: CGRect, pageBounds: CGRect) -> CGRect {
+        guard pageBounds.width > 0, pageBounds.height > 0 else { return .zero }
+
+        let scaleX = bounds.width / pageBounds.width
+        let scaleY = bounds.height / pageBounds.height
+        let x = (pageRect.minX - pageBounds.minX) * scaleX
+        let y = (pageBounds.maxY - pageRect.maxY) * scaleY
+
+        return CGRect(
+            x: x,
+            y: y,
+            width: pageRect.width * scaleX,
+            height: pageRect.height * scaleY
+        )
     }
 }
 

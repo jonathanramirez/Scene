@@ -5,7 +5,7 @@ import SwiftData
 enum ParseCacheService {
 
     /// Bump this string whenever the parser logic changes to invalidate all stored caches.
-    static let parserVersion = "1.1"
+    static let parserVersion = "1.3"
 
     // MARK: - Read
 

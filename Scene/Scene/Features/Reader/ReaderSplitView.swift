@@ -35,6 +35,11 @@ struct ReaderSplitView: View {
     @State private var shouldReadOtherPDFCharacters = false
     @State private var pdfReadingRateMultiplier = 1.0
     @State private var shouldHighlightOnlyCurrentPDFLine = true
+    @State private var arePDFActionHighlightsEnabled = true
+    @State private var shouldReadPDFActionLines = false
+    @State private var pdfPauseLengthMultiplier = 1.0
+    @State private var isPDFReadingPlayerVisible = false
+    @State private var isSelectingPDFReadingStart = false
 
     @Query(sort: \ScriptBookmark.createdAt, order: .reverse)
     private var allBookmarks: [ScriptBookmark]
@@ -119,6 +124,9 @@ struct ReaderSplitView: View {
                     mutedCharacters: $mutedPDFReadingCharacters,
                     selectedCharacter: $selectedPDFReadingCharacter,
                     readOtherCharacters: $shouldReadOtherPDFCharacters,
+                    highlightActions: $arePDFActionHighlightsEnabled,
+                    readActionLines: $shouldReadPDFActionLines,
+                    pauseLengthMultiplier: $pdfPauseLengthMultiplier,
                     highlightOnlyCurrentLine: $shouldHighlightOnlyCurrentPDFLine,
                     isVoiceOverPlaying: pdfReadingController.isPlaying,
                     voiceOverStatus: pdfReadingController.statusText,
@@ -152,7 +160,7 @@ struct ReaderSplitView: View {
     private var readerDetail: some View {
         ReaderView(
             document: document,
-            dialogueTurns: vm.parseResult?.dialogueTurns ?? [],
+            dialogueTurns: pdfHighlightTurns,
             dialogueHighlightSettings: PDFDialogueHighlightSettings(
                 isEnabled: isPDFReadingOverlayEnabled,
                 mutedCharacters: mutedPDFReadingCharacters,
@@ -165,18 +173,32 @@ struct ReaderSplitView: View {
             onPageChanged: { page in
                 currentPageIndex = page
                 sessionStore.session(for: document.id).currentPage = page
-            }
+            },
+            onDialogueTurnSelected: selectPDFReadingStart
         )
+        .onChange(of: pdfReadingController.statusText) { _, status in
+            if status == "Rehearsal complete" {
+                isPDFReadingPlayerVisible = true
+            }
+        }
         .overlay(alignment: .bottom) {
-            if pdfReadingController.isPlaying || pdfReadingController.isPaused {
+            if isPDFReadingPlayerVisible || pdfReadingController.isPlaying || pdfReadingController.isPaused {
                 PDFReadingPlayerOverlay(
                     status: pdfReadingController.statusText,
                     characterName: pdfReadingController.currentTurn?.characterName,
+                    pauseRemainingSeconds: pdfReadingController.pauseRemainingSeconds,
+                    isNextPage: isPDFReadingNextPage,
                     isPaused: pdfReadingController.isPaused,
                     rateMultiplier: pdfReadingRateMultiplier,
+                    pauseMultiplier: pdfPauseLengthMultiplier,
+                    isSelectingStart: isSelectingPDFReadingStart,
                     onTogglePause: togglePDFReadingPause,
                     onSkip: { pdfReadingController.skipCurrentTurn() },
+                    onAdjustPause: { pdfReadingController.adjustCurrentPause(by: $0) },
+                    onSelectPauseMultiplier: setPDFPauseLengthMultiplier,
+                    onToggleStartSelection: togglePDFStartSelectionMode,
                     onStop: stopPDFReadingVoiceOver,
+                    onClose: closePDFReadingPlayer,
                     onSelectRate: setPDFReadingRateMultiplier
                 )
                 .padding(.horizontal, 18)
@@ -343,17 +365,43 @@ struct ReaderSplitView: View {
         return String(format: "%.3f,%.3f", 0.88, y)
     }
 
-    private func startPDFReadingVoiceOver(character: String, readOtherCharacters: Bool) {
+    private func startPDFReadingVoiceOver(character: String, readOtherCharacters: Bool, readActionLines: Bool) {
+        startPDFReadingVoiceOver(
+            character: character,
+            readOtherCharacters: readOtherCharacters,
+            readActionLines: readActionLines,
+            startingAtSequenceIndex: nil
+        )
+    }
+
+    private func startPDFReadingVoiceOver(
+        character: String,
+        readOtherCharacters: Bool,
+        readActionLines: Bool,
+        startingAtSequenceIndex: Int?
+    ) {
         guard let parseResult = vm.parseResult else { return }
-        let upcomingTurns = parseResult.dialogueTurns.filter { $0.pageIndex >= currentPageIndex }
-        let turns = upcomingTurns.isEmpty ? parseResult.dialogueTurns : upcomingTurns
+        let allTurns = pdfPlaybackTurns(from: parseResult)
+        let upcomingTurns: [ScriptDialogueTurn]
+        if let startingAtSequenceIndex,
+           let startIndex = allTurns.firstIndex(where: { $0.sequenceIndex == startingAtSequenceIndex }) {
+            upcomingTurns = Array(allTurns[startIndex...])
+        } else {
+            upcomingTurns = allTurns.filter { $0.pageIndex >= currentPageIndex }
+        }
+        let turns = upcomingTurns.isEmpty ? allTurns : upcomingTurns
         guard !turns.isEmpty, !character.isEmpty else { return }
 
+        isPDFReadingPlayerVisible = true
+        isSelectingPDFReadingStart = false
         isPDFReadingOverlayEnabled = true
         isPDFReadingMuteAll = false
         shouldHighlightOnlyCurrentPDFLine = true
         selectedPDFReadingCharacter = character
         mutedPDFReadingCharacters = readOtherCharacters ? [] : Set(pdfReadingCharacters.filter { $0 != character })
+        if !arePDFActionHighlightsEnabled {
+            mutedPDFReadingCharacters.insert(Self.actionCharacterName)
+        }
         pdfReadingController.start(
             turns: turns,
             selectedCharacter: character,
@@ -362,13 +410,22 @@ struct ReaderSplitView: View {
             speakSelectedCharacter: true,
             speechRate: pdfReadingSpeechRate,
             speakOtherCharacters: readOtherCharacters,
+            alwaysSpeakCharacters: readActionLines ? [Self.actionCharacterName] : [],
+            neverSpeakCharacters: readActionLines ? [] : [Self.actionCharacterName],
             skippedTurnPause: 0.75,
-            showSkippedTurns: readOtherCharacters
+            showSkippedTurns: readOtherCharacters || !readActionLines,
+            pauseLengthMultiplier: pdfPauseLengthMultiplier
         )
     }
 
     private func stopPDFReadingVoiceOver() {
         pdfReadingController.stop()
+    }
+
+    private func closePDFReadingPlayer() {
+        pdfReadingController.stop()
+        isPDFReadingPlayerVisible = false
+        isSelectingPDFReadingStart = false
     }
 
     private func togglePDFReadingPause() {
@@ -384,6 +441,41 @@ struct ReaderSplitView: View {
         pdfReadingController.updateSpeechRate(pdfReadingSpeechRate)
     }
 
+    private func setPDFPauseLengthMultiplier(_ multiplier: Double) {
+        pdfPauseLengthMultiplier = multiplier
+        pdfReadingController.updatePauseLengthMultiplier(multiplier)
+    }
+
+    private var isPDFReadingNextPage: Bool {
+        guard let upcomingPage = pdfReadingController.upcomingTurn?.pageIndex else { return false }
+        let referencePage = pdfReadingController.currentTurn?.pageIndex ?? currentPageIndex
+        return upcomingPage != referencePage
+    }
+
+    private func togglePDFStartSelectionMode() {
+        isSelectingPDFReadingStart.toggle()
+        if isSelectingPDFReadingStart {
+            isPDFReadingPlayerVisible = true
+            isPDFReadingOverlayEnabled = true
+            isPDFReadingMuteAll = false
+            shouldHighlightOnlyCurrentPDFLine = false
+        } else {
+            shouldHighlightOnlyCurrentPDFLine = true
+        }
+    }
+
+    private func selectPDFReadingStart(_ turn: ScriptDialogueTurn) {
+        guard isSelectingPDFReadingStart || isPDFReadingPlayerVisible || pdfReadingController.isPlaying else { return }
+        let character = selectedPDFReadingCharacter.isEmpty ? (pdfReadingCharacters.first ?? "") : selectedPDFReadingCharacter
+        guard !character.isEmpty else { return }
+        startPDFReadingVoiceOver(
+            character: character,
+            readOtherCharacters: shouldReadOtherPDFCharacters,
+            readActionLines: shouldReadPDFActionLines,
+            startingAtSequenceIndex: turn.sequenceIndex
+        )
+    }
+
     private var pdfReadingCharacters: [String] {
         guard let parseResult = vm.parseResult else { return [] }
         let speakers = Set(parseResult.dialogueTurns.map(\.characterName))
@@ -396,6 +488,45 @@ struct ReaderSplitView: View {
     private var pdfReadingSpeechRate: Float {
         let rawRate = AVSpeechUtteranceDefaultSpeechRate * Float(pdfReadingRateMultiplier)
         return min(max(rawRate, AVSpeechUtteranceMinimumSpeechRate), AVSpeechUtteranceMaximumSpeechRate)
+    }
+
+    private static let actionCharacterName = "Action"
+    private static let actionSequenceIndexOffset = 1_000_000
+
+    private var pdfHighlightTurns: [ScriptDialogueTurn] {
+        guard let parseResult = vm.parseResult else { return [] }
+        var turns = parseResult.dialogueTurns
+        let shouldIncludeActions = arePDFActionHighlightsEnabled || pdfReadingController.spokenTurn?.characterName == Self.actionCharacterName
+        if shouldIncludeActions {
+            turns.append(contentsOf: parseResult.actionLines.map(actionTurn(from:)))
+        }
+        return turns
+    }
+
+    private func pdfPlaybackTurns(from parseResult: ScriptParseResult) -> [ScriptDialogueTurn] {
+        (parseResult.dialogueTurns + parseResult.actionLines.map(actionTurn(from:)))
+            .sorted {
+                if $0.scriptOrderIndex == $1.scriptOrderIndex {
+                    return $0.sequenceIndex < $1.sequenceIndex
+                }
+                return $0.scriptOrderIndex < $1.scriptOrderIndex
+            }
+    }
+
+    private func actionTurn(from action: ScriptActionLine) -> ScriptDialogueTurn {
+        ScriptDialogueTurn(
+            pageIndex: action.pageIndex,
+            sequenceIndex: Self.actionSequenceIndexOffset + action.sequenceIndex,
+            scriptOrderIndex: action.scriptOrderIndex,
+            characterName: Self.actionCharacterName,
+            parenthetical: nil,
+            dialogue: action.text,
+            characterQualifier: nil,
+            isVoiceOver: true,
+            isOffScreen: false,
+            isContinued: false,
+            suggestedPauseAfter: 0.35
+        )
     }
 
     private var dialogueTurnCounts: [String: Int] {
@@ -509,10 +640,13 @@ private struct PDFReadingControlsView: View {
     @Binding var mutedCharacters: Set<String>
     @Binding var selectedCharacter: String
     @Binding var readOtherCharacters: Bool
+    @Binding var highlightActions: Bool
+    @Binding var readActionLines: Bool
+    @Binding var pauseLengthMultiplier: Double
     @Binding var highlightOnlyCurrentLine: Bool
     let isVoiceOverPlaying: Bool
     let voiceOverStatus: String
-    let onStartVoiceOver: (String, Bool) -> Void
+    let onStartVoiceOver: (String, Bool, Bool) -> Void
     let onStopVoiceOver: () -> Void
 
     private var characters: [String] {
@@ -560,7 +694,7 @@ private struct PDFReadingControlsView: View {
                             isEnabled = true
                             isMuteAll = false
                             highlightOnlyCurrentLine = true
-                            onStartVoiceOver(selectedRehearsalCharacter ?? "", readOtherCharacters)
+                            onStartVoiceOver(selectedRehearsalCharacter ?? "", readOtherCharacters, readActionLines)
                             dismiss()
                         }
                     } label: {
@@ -574,7 +708,18 @@ private struct PDFReadingControlsView: View {
                     Toggle("Read other characters", isOn: $readOtherCharacters)
                         .disabled(isVoiceOverPlaying)
 
+                    Toggle("Read action lines", isOn: $readActionLines)
+                        .disabled(isVoiceOverPlaying)
+
                     Toggle("Highlight only spoken line", isOn: $highlightOnlyCurrentLine)
+
+                    Picker("Pause length", selection: $pauseLengthMultiplier) {
+                        Text("Short").tag(0.7)
+                        Text("Natural").tag(1.0)
+                        Text("Long").tag(1.4)
+                        Text("Extra Long").tag(1.8)
+                    }
+                    .pickerStyle(.menu)
 
                     if isVoiceOverPlaying {
                         Text(voiceOverStatus)
@@ -584,11 +729,14 @@ private struct PDFReadingControlsView: View {
                 } header: {
                     Text("Voice Over Player")
                 } footer: {
-                    Text("When enabled, only the line currently being read is highlighted. Pauses do not color the full PDF.")
+                    Text("Action lines are stage directions. Read them as narration, or leave them off to pause and skip them.")
                 }
 
                 Section {
                     Toggle("Highlight dialogue on PDF", isOn: $isEnabled)
+
+                    Toggle("Highlight action lines", isOn: $highlightActions)
+                        .disabled(!isEnabled)
 
                     Toggle("Mute all characters", isOn: $isMuteAll)
                         .disabled(!isEnabled)
@@ -688,11 +836,19 @@ private struct PDFReadingControlsView: View {
 private struct PDFReadingPlayerOverlay: View {
     let status: String
     let characterName: String?
+    let pauseRemainingSeconds: Double?
+    let isNextPage: Bool
     let isPaused: Bool
     let rateMultiplier: Double
+    let pauseMultiplier: Double
+    let isSelectingStart: Bool
     let onTogglePause: () -> Void
     let onSkip: () -> Void
+    let onAdjustPause: (Double) -> Void
+    let onSelectPauseMultiplier: (Double) -> Void
+    let onToggleStartSelection: () -> Void
     let onStop: () -> Void
+    let onClose: () -> Void
     let onSelectRate: (Double) -> Void
 
     private let rates: [(label: String, value: Double)] = [
@@ -700,6 +856,12 @@ private struct PDFReadingPlayerOverlay: View {
         ("1x", 1.0),
         ("1.25x", 1.25),
         ("1.5x", 1.5)
+    ]
+    private let pauseRates: [(label: String, value: Double)] = [
+        ("Short", 0.7),
+        ("Natural", 1.0),
+        ("Long", 1.4),
+        ("Extra", 1.8)
     ]
 
     var body: some View {
@@ -713,8 +875,48 @@ private struct PDFReadingPlayerOverlay: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                if let countdownText {
+                    Text(countdownText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isNextPage ? .orange : .secondary)
+                        .lineLimit(1)
+                } else if isSelectingStart {
+                    Text("Tap a highlighted paragraph to start there")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if pauseRemainingSeconds != nil {
+                Button {
+                    onAdjustPause(-0.75)
+                } label: {
+                    Image(systemName: "minus")
+                        .frame(width: 28, height: 34)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Shorten pause")
+
+                Button {
+                    onAdjustPause(0.75)
+                } label: {
+                    Image(systemName: "plus")
+                        .frame(width: 28, height: 34)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Lengthen pause")
+            }
+
+            Button(action: onToggleStartSelection) {
+                Image(systemName: isSelectingStart ? "scope" : "scope")
+                    .foregroundStyle(isSelectingStart ? .blue : .primary)
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Choose start paragraph")
 
             Button(action: onTogglePause) {
                 Image(systemName: isPaused ? "play.fill" : "pause.fill")
@@ -750,12 +952,38 @@ private struct PDFReadingPlayerOverlay: View {
             .buttonStyle(.bordered)
             .accessibilityLabel("Playback speed")
 
+            Menu {
+                ForEach(pauseRates, id: \.value) { rate in
+                    Button {
+                        onSelectPauseMultiplier(rate.value)
+                    } label: {
+                        if selectedPauseRate == rate.value {
+                            Label(rate.label, systemImage: "checkmark")
+                        } else {
+                            Text(rate.label)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "timer")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Pause length")
+
             Button(role: .destructive, action: onStop) {
                 Image(systemName: "stop.fill")
                     .frame(width: 34, height: 34)
             }
             .buttonStyle(.bordered)
             .accessibilityLabel("Stop voice over")
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Close player")
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -768,6 +996,16 @@ private struct PDFReadingPlayerOverlay: View {
 
     private var selectedRateLabel: String {
         rates.first(where: { $0.value == selectedRate })?.label ?? "1x"
+    }
+
+    private var selectedPauseRate: Double {
+        pauseRates.min(by: { abs($0.value - pauseMultiplier) < abs($1.value - pauseMultiplier) })?.value ?? 1
+    }
+
+    private var countdownText: String? {
+        guard let pauseRemainingSeconds else { return nil }
+        let seconds = max(Int(ceil(pauseRemainingSeconds)), 0)
+        return isNextPage ? "Next page in \(seconds)s" : "Next line in \(seconds)s"
     }
 }
 
