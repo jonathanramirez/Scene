@@ -236,14 +236,20 @@ struct ReaderSplitView: View {
                     Image(systemName: "bookmark")
                 }
 
+                if vm.parseResult?.dialogueTurns.isEmpty == false {
+                    Button {
+                        togglePDFDialogueHighlights()
+                    } label: {
+                        Image(systemName: isPDFReadingOverlayEnabled ? "highlighter" : "highlighter")
+                            .foregroundStyle(isPDFReadingOverlayEnabled ? .orange : .primary)
+                    }
+                    .accessibilityLabel(isPDFReadingOverlayEnabled ? "Hide dialogue highlights" : "Highlight dialogue")
+                }
+
                 Menu {
                     if let parseResult = vm.parseResult, !parseResult.dialogueTurns.isEmpty {
                         Button {
-                            isPDFReadingOverlayEnabled.toggle()
-                            if isPDFReadingOverlayEnabled {
-                                isPDFReadingMuteAll = false
-                                shouldHighlightOnlyCurrentPDFLine = false
-                            }
+                            togglePDFDialogueHighlights()
                         } label: {
                             Label(
                                 isPDFReadingOverlayEnabled ? "Hide Dialogue Highlights" : "Highlight All Dialogue",
@@ -439,6 +445,14 @@ struct ReaderSplitView: View {
     private func setPDFReadingRateMultiplier(_ multiplier: Double) {
         pdfReadingRateMultiplier = multiplier
         pdfReadingController.updateSpeechRate(pdfReadingSpeechRate)
+    }
+
+    private func togglePDFDialogueHighlights() {
+        isPDFReadingOverlayEnabled.toggle()
+        if isPDFReadingOverlayEnabled {
+            isPDFReadingMuteAll = false
+            shouldHighlightOnlyCurrentPDFLine = false
+        }
     }
 
     private func setPDFPauseLengthMultiplier(_ multiplier: Double) {
@@ -663,30 +677,24 @@ private struct PDFReadingControlsView: View {
         }
     }
 
+    private let pauseOptions: [(title: String, value: Double)] = [
+        ("Short", 0.7),
+        ("Natural", 1.0),
+        ("Long", 1.4),
+        ("Extra", 1.8)
+    ]
+
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Picker("Highlight role", selection: $selectedCharacter) {
+                    Picker("Role", selection: $selectedCharacter) {
                         ForEach(characters, id: \.self) { character in
                             Text(character).tag(character)
                         }
                     }
                     .pickerStyle(.menu)
 
-                    Button {
-                        startRehearsal()
-                    } label: {
-                        Label("Highlight Selected Role", systemImage: "highlighter")
-                    }
-                    .disabled(selectedRehearsalCharacter == nil)
-                } header: {
-                    Text("Role Highlight")
-                } footer: {
-                    Text("This only colors the selected role. It does not start the voice player.")
-                }
-
-                Section {
                     Button {
                         if isVoiceOverPlaying {
                             onStopVoiceOver()
@@ -699,68 +707,82 @@ private struct PDFReadingControlsView: View {
                         }
                     } label: {
                         Label(
-                            isVoiceOverPlaying ? "Stop Voice Over Player" : "Start Voice Over Player",
+                            isVoiceOverPlaying ? "Stop Player" : "Start Player",
                             systemImage: isVoiceOverPlaying ? "stop.fill" : "speaker.wave.2.fill"
                         )
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .foregroundStyle(isVoiceOverPlaying ? .red : .primary)
 
-                    Toggle("Read other characters", isOn: $readOtherCharacters)
-                        .disabled(isVoiceOverPlaying)
-
-                    Toggle("Read action lines", isOn: $readActionLines)
-                        .disabled(isVoiceOverPlaying)
-
-                    Toggle("Highlight only spoken line", isOn: $highlightOnlyCurrentLine)
-
-                    Picker("Pause length", selection: $pauseLengthMultiplier) {
-                        Text("Short").tag(0.7)
-                        Text("Natural").tag(1.0)
-                        Text("Long").tag(1.4)
-                        Text("Extra Long").tag(1.8)
+                    Button {
+                        startRehearsal()
+                    } label: {
+                        Label("Highlight Role", systemImage: "highlighter")
                     }
-                    .pickerStyle(.menu)
-
-                    if isVoiceOverPlaying {
-                        Text(voiceOverStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    .disabled(selectedRehearsalCharacter == nil)
                 } header: {
-                    Text("Voice Over Player")
-                } footer: {
-                    Text("Action lines are stage directions. Read them as narration, or leave them off to pause and skip them.")
+                    Text("Start")
                 }
 
                 Section {
-                    Toggle("Highlight dialogue on PDF", isOn: $isEnabled)
+                    Toggle("Other roles", isOn: $readOtherCharacters)
+                        .disabled(isVoiceOverPlaying)
 
-                    Toggle("Highlight action lines", isOn: $highlightActions)
+                    Toggle("Action narration", isOn: $readActionLines)
+                        .disabled(isVoiceOverPlaying)
+
+                    Toggle("Current line only", isOn: $highlightOnlyCurrentLine)
+
+                    Picker("Pauses", selection: $pauseLengthMultiplier) {
+                        ForEach(pauseOptions, id: \.value) { option in
+                            Text(option.title).tag(option.value)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if isVoiceOverPlaying {
+                        Label(voiceOverStatus, systemImage: "waveform")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Voice")
+                }
+
+                Section {
+                    Toggle("Dialogue", isOn: $isEnabled)
+
+                    Toggle("Action lines", isOn: $highlightActions)
                         .disabled(!isEnabled)
 
-                    Toggle("Mute all characters", isOn: $isMuteAll)
+                    Toggle("Hide all roles", isOn: $isMuteAll)
                         .disabled(!isEnabled)
 
                     HStack {
-                        Button("Unmute All") {
+                        Button {
                             mutedCharacters.removeAll()
                             isMuteAll = false
                             isEnabled = true
+                        } label: {
+                            Label("Show All", systemImage: "eye")
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Mute All") {
+                        Button {
                             isMuteAll = true
                             isEnabled = true
+                        } label: {
+                            Label("Hide All", systemImage: "eye.slash")
                         }
                         .buttonStyle(.bordered)
                     }
                     .padding(.vertical, 4)
-                } footer: {
-                    Text("Muted characters are not colored on the PDF.")
+                } header: {
+                    Text("PDF Highlights")
                 }
 
-                Section("Characters") {
+                Section("Roles") {
                     ForEach(characters, id: \.self) { character in
                         Toggle(isOn: binding(for: character)) {
                             HStack(spacing: 12) {
